@@ -19,8 +19,8 @@
 
 ## Build, Test, and Development Commands
 - Open: `open Agency.xcodeproj` (scheme `Agency`).
-- Build: `xcodebuild -scheme Agency -destination 'platform=iOS Simulator,name=iPhone 15' build`.
-- Tests: `xcodebuild -scheme Agency -destination 'platform=iOS Simulator,name=iPhone 15' test` (OS 26 simulator).
+- Build: `xcodebuild -scheme Agency -destination 'platform=iOS Simulator,name=iPhone Air' build`.
+- Tests: `xcodebuild -scheme Agency -destination 'platform=iOS Simulator,name=iPhone Air' test` (OS 26 simulator).
 
 ## Coding Style & Naming Conventions
 - Prefer small composable SwiftUI views.
