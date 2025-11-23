@@ -28,6 +28,7 @@
 - Naming: types PascalCase; vars/functions lowerCamelCase; views end with `View`; tests mirror subject (`ContentViewTests`).
 - Assets: lowerCamelCase catalog names; avoid spaces.
 - Concurrency: prefer Swift Concurrency (async/await, actors); avoid XPC unless required—XPC + async is fragile.
+- Use `@Observable` macro and async streams from Observation and Swift Concurrency; don't use Combine unless there isn't any way around it.
 
 ## Testing Guidelines
 - Unit tests live in `AgencyTests/`; name methods `test<Behavior>` and use `#expect`.
