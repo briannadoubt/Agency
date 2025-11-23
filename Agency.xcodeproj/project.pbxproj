@@ -27,6 +27,8 @@
 		03964F682ED18013000DEA13 /* Agency.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Agency.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		03964F752ED18016000DEA13 /* AgencyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgencyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		03964F7F2ED18016000DEA13 /* AgencyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgencyUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		03964FCE2ED1BC16000DEA13 /* PROJECT_WORKFLOW.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = PROJECT_WORKFLOW.md; sourceTree = "<group>"; };
+		03964FF32ED3C029000DEA13 /* AGENTS.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = AGENTS.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -43,6 +45,11 @@
 		03964F822ED18016000DEA13 /* AgencyUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = AgencyUITests;
+			sourceTree = "<group>";
+		};
+		03964FCD2ED1BA31000DEA13 /* project */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = project;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -75,6 +82,9 @@
 		03964F5F2ED18013000DEA13 = {
 			isa = PBXGroup;
 			children = (
+				03964FF32ED3C029000DEA13 /* AGENTS.md */,
+				03964FCE2ED1BC16000DEA13 /* PROJECT_WORKFLOW.md */,
+				03964FCD2ED1BA31000DEA13 /* project */,
 				03964F6A2ED18013000DEA13 /* Agency */,
 				03964F782ED18016000DEA13 /* AgencyTests */,
 				03964F822ED18016000DEA13 /* AgencyUITests */,
