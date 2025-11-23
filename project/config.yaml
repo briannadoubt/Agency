@@ -1,0 +1,6 @@
+agents:
+  maxConcurrent: 1
+  perFlow:
+    implement: 1
+    review: 1
+    research: 1
