@@ -244,8 +244,11 @@ struct CardDetailModal: View {
 
         if old == .raw && (new == .form || new == .view) {
             do {
+                let priorHistoryEntry = formDraft.newHistoryEntry
                 let parsedCard = try writer.formDraft(fromRaw: rawDraft, fileURL: snapshot!.card.filePath)
+                // Preserve transient fields not represented in markdown.
                 formDraft = parsedCard
+                formDraft.newHistoryEntry = priorHistoryEntry
                 let parsed = try CardFileParser().parse(fileURL: snapshot!.card.filePath, contents: rawDraft)
                 pendingRawSnapshot = CardDocumentSnapshot(card: parsed,
                                                            contents: rawDraft,
