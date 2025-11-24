@@ -205,7 +205,6 @@ final class ProjectScannerWatcher {
         sources.forEach { $0.cancel() }
         sources.removeAll()
 
-        fileDescriptors.forEach { close($0) }
         fileDescriptors.removeAll()
     }
 
