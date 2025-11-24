@@ -47,7 +47,8 @@ struct CardInspector: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Card Inspector")
-                    .font(.title3.bold())
+                    .font(DesignTokens.Typography.title)
+                    .foregroundStyle(DesignTokens.Colors.textPrimary)
                 Spacer()
                 Button {
                     if let card {
@@ -68,8 +69,8 @@ struct CardInspector: View {
             }
         }
         .padding()
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color(.windowBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(.separatorColor), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 12).fill(DesignTokens.Colors.surface))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(DesignTokens.Colors.stroke, lineWidth: 1))
     }
 
     private func openInEditor(_ card: Card) {
@@ -85,10 +86,11 @@ private struct CardInspectorContent: View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(card.title ?? "Untitled Card")
-                    .font(.headline)
+                    .font(DesignTokens.Typography.headline)
+                    .foregroundStyle(DesignTokens.Colors.textPrimary)
                 Text(card.code)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
             }
 
             LabeledField(title: "Title") {
@@ -118,12 +120,12 @@ private struct AcceptanceCriteriaList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Acceptance Criteria")
-                .font(.subheadline.bold())
+                Text("Acceptance Criteria")
+                    .font(DesignTokens.Typography.headline)
 
             if criteria.isEmpty {
                 Text("No acceptance criteria yet.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
             } else {
                 ForEach($criteria) { $criterion in
                     Toggle(isOn: $criterion.isComplete) {
@@ -144,7 +146,7 @@ private struct LabeledField<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.subheadline.bold())
+                .font(DesignTokens.Typography.headline)
             content()
         }
     }
@@ -158,7 +160,7 @@ private struct LabeledTextEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.subheadline.bold())
+                .font(DesignTokens.Typography.headline)
 
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $text)
@@ -166,13 +168,13 @@ private struct LabeledTextEditor: View {
                     .scrollContentBackground(.hidden)
                     .padding(8)
                     .background(RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(.controlBackgroundColor)))
+                        .fill(DesignTokens.Colors.card))
                     .overlay(RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color(.separatorColor), lineWidth: 1))
+                        .stroke(DesignTokens.Colors.stroke, lineWidth: 1))
 
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(placeholder)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DesignTokens.Colors.textSecondary)
                         .padding(12)
                         .allowsHitTesting(false)
                 }
