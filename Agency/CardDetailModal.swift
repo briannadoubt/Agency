@@ -50,6 +50,7 @@ struct CardDetailModal: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var appendHistory = false
+    @State private var skipRawRefreshOnce = false
 
     private let writer = CardMarkdownWriter()
 
@@ -233,6 +234,11 @@ struct CardDetailModal: View {
         guard snapshot != nil else { return }
 
         if old != .raw && new == .raw {
+            if skipRawRefreshOnce {
+                skipRawRefreshOnce = false
+                return
+            }
+
             let baseline = pendingRawSnapshot ?? snapshot
             guard let baseline else { return }
 
@@ -256,6 +262,7 @@ struct CardDetailModal: View {
             } catch {
                 errorMessage = error.localizedDescription
                 mode = .raw
+                skipRawRefreshOnce = true
             }
         }
     }
