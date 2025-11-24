@@ -127,6 +127,11 @@ struct CardMarkdownWriter {
         return try write(rendered, snapshot: snapshot)
     }
 
+    /// Saves already-rendered markdown using the provided snapshot as the conflict baseline.
+    func saveMergedContents(_ contents: String, snapshot: CardDocumentSnapshot) throws -> CardDocumentSnapshot {
+        try write(contents, snapshot: snapshot)
+    }
+
     func saveRaw(_ raw: String, snapshot: CardDocumentSnapshot) throws -> CardDocumentSnapshot {
         return try write(raw, snapshot: snapshot)
     }

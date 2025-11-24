@@ -31,6 +31,7 @@ struct CardDetailModal: View {
     @Environment(\.dismiss) private var dismiss
     @State private var mode: CardDetailMode = .view
     @State private var snapshot: CardDocumentSnapshot?
+    @State private var pendingRawSnapshot: CardDocumentSnapshot?
     @State private var formDraft = CardDetailFormDraft(title: "",
                                                        owner: "",
                                                        agentFlow: "",
@@ -215,6 +216,7 @@ struct CardDetailModal: View {
             let loaded = try writer.loadSnapshot(for: card)
             await MainActor.run {
                 snapshot = loaded
+                pendingRawSnapshot = nil
                 formDraft = CardDetailFormDraft.from(card: loaded.card)
                 rawDraft = loaded.contents
                 isLoading = false
@@ -241,12 +243,10 @@ struct CardDetailModal: View {
             do {
                 let parsedCard = try writer.formDraft(fromRaw: rawDraft, fileURL: snapshot!.card.filePath)
                 formDraft = parsedCard
-
-                // Replace snapshot with the parsed raw state so subsequent form saves include raw edits.
                 let parsed = try CardFileParser().parse(fileURL: snapshot!.card.filePath, contents: rawDraft)
-                snapshot = CardDocumentSnapshot(card: parsed,
-                                               contents: rawDraft,
-                                               modifiedAt: snapshot!.modifiedAt)
+                pendingRawSnapshot = CardDocumentSnapshot(card: parsed,
+                                                           contents: rawDraft,
+                                                           modifiedAt: snapshot!.modifiedAt)
             } catch {
                 errorMessage = error.localizedDescription
                 mode = .raw
@@ -258,6 +258,7 @@ struct CardDetailModal: View {
         guard let snapshot else { return }
         formDraft = CardDetailFormDraft.from(card: snapshot.card)
         rawDraft = snapshot.contents
+        pendingRawSnapshot = nil
     }
 
     @MainActor
@@ -270,9 +271,12 @@ struct CardDetailModal: View {
             let updated: CardDocumentSnapshot
             switch mode {
             case .form:
-                updated = try writer.saveFormDraft(formDraft,
-                                                   appendHistory: appendHistory,
-                                                   snapshot: snapshot)
+                let mergeBaseline = pendingRawSnapshot ?? snapshot
+                let merged = writer.renderMarkdown(from: formDraft,
+                                                   basedOn: mergeBaseline.card,
+                                                   existingContents: mergeBaseline.contents,
+                                                   appendHistory: appendHistory)
+                updated = try writer.saveMergedContents(merged, snapshot: snapshot)
             case .raw:
                 updated = try writer.saveRaw(rawDraft, snapshot: snapshot)
             case .view:
@@ -280,6 +284,7 @@ struct CardDetailModal: View {
             }
 
             self.snapshot = updated
+            pendingRawSnapshot = nil
             formDraft = CardDetailFormDraft.from(card: updated.card)
             rawDraft = updated.contents
             appendHistory = false
