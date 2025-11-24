@@ -122,9 +122,10 @@ struct ProjectScanner {
 @MainActor
 final class ProjectScannerWatcher {
     private let scanner: ProjectScanner
-    private var sources: [DispatchSourceFileSystemObject] = []
+    private var sources: [URL: DispatchSourceFileSystemObject] = [:]
     private var debounceTask: Task<Void, Never>?
-    private var fileDescriptors: [CInt] = []
+    private var fileDescriptors: [URL: CInt] = [:]
+    private var watchedDirectories: Set<URL> = []
     private let queue = DispatchQueue(label: "agency.project-scanner-watcher")
 
     init(scanner: ProjectScanner = ProjectScanner()) {
@@ -160,30 +161,7 @@ final class ProjectScannerWatcher {
         let directoriesToWatch = watchTargets(rootURL: rootURL)
 
         for directory in directoriesToWatch {
-            let fd = open(directory.path, O_EVTONLY)
-            guard fd != -1 else { continue }
-
-            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd,
-                                                                   eventMask: [.write, .extend, .delete, .rename],
-                                                                   queue: queue)
-
-            source.setEventHandler { [weak self] in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.scheduleDebouncedScan(rootURL: rootURL, debounce: debounce, continuation: continuation)
-                }
-            }
-
-            source.setCancelHandler { [weak self] in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    close(fd)
-                }
-            }
-
-            fileDescriptors.append(fd)
-            sources.append(source)
-            source.resume()
+            addWatch(for: directory, rootURL: rootURL, debounce: debounce, continuation: continuation)
         }
     }
 
@@ -202,10 +180,11 @@ final class ProjectScannerWatcher {
         debounceTask?.cancel()
         debounceTask = nil
 
-        sources.forEach { $0.cancel() }
+        sources.values.forEach { $0.cancel() }
         sources.removeAll()
 
         fileDescriptors.removeAll()
+        watchedDirectories.removeAll()
     }
 
     private func watchTargets(rootURL: URL) -> [URL] {
@@ -225,6 +204,68 @@ final class ProjectScannerWatcher {
         }
 
         return targets
+    }
+
+    private func refreshWatchTargets(rootURL: URL,
+                                     debounce: Duration,
+                                     continuation: AsyncStream<Result<[PhaseSnapshot], Error>>.Continuation) {
+        let newTargets = watchTargets(rootURL: rootURL)
+        let newSet = Set(newTargets)
+
+        let removed = watchedDirectories.subtracting(newSet)
+        let added = newSet.subtracting(watchedDirectories)
+
+        for directory in removed {
+            removeWatch(for: directory)
+        }
+
+        for directory in added {
+            addWatch(for: directory, rootURL: rootURL, debounce: debounce, continuation: continuation)
+        }
+
+        watchedDirectories = newSet
+    }
+
+    private func addWatch(for directory: URL,
+                          rootURL: URL,
+                          debounce: Duration,
+                          continuation: AsyncStream<Result<[PhaseSnapshot], Error>>.Continuation) {
+        guard sources[directory] == nil else { return }
+
+        let fd = open(directory.path, O_EVTONLY)
+        guard fd != -1 else { return }
+
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd,
+                                                               eventMask: [.write, .extend, .delete, .rename],
+                                                               queue: queue)
+
+        source.setEventHandler { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.refreshWatchTargets(rootURL: rootURL, debounce: debounce, continuation: continuation)
+                self.scheduleDebouncedScan(rootURL: rootURL, debounce: debounce, continuation: continuation)
+            }
+        }
+
+        source.setCancelHandler { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                close(fd)
+                fileDescriptors.removeValue(forKey: directory)
+                sources.removeValue(forKey: directory)
+                watchedDirectories.remove(directory)
+            }
+        }
+
+        fileDescriptors[directory] = fd
+        sources[directory] = source
+        watchedDirectories.insert(directory)
+        source.resume()
+    }
+
+    private func removeWatch(for directory: URL) {
+        guard let source = sources[directory] else { return }
+        source.cancel()
     }
 }
 
