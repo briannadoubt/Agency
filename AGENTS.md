@@ -6,6 +6,7 @@
 - Tests: unit in `AgencyTests/AgencyTests.swift`; UI in `AgencyUITests/`.
 - Project file: `Agency.xcodeproj`.
 - Planning: Markdown cards in `project/phase-*/{backlog,in-progress,done}/`; follow `PROJECT_WORKFLOW.md`. XPC design: `project/XPC_ARCHITECTURE.md` (Phase 5).
+- Source code inside of the `Agency/` folder is referenced by said `Agency/` directory so the filesystem is synced with Xcode and Xcode doesn't need to understand membership of each and every file.
 
 ## Task Execution Workflow (agent default)
 - Open `PROJECT_WORKFLOW.md` before acting; required step list.
@@ -15,12 +16,12 @@
 
 ## Toolchain & Platforms
 - Swift 6.2; Xcode 26; macOS 26 host.
-- Target OSes: iOS/iPadOS/watchOS/tvOS/visionOS 26 (matching simulators).
+- Target OS: macOS 26.
 
 ## Build, Test, and Development Commands
 - Open: `open Agency.xcodeproj` (scheme `Agency`).
-- Build: `xcodebuild -scheme Agency -destination 'platform=iOS Simulator,name=iPhone Air' build`.
-- Tests: `xcodebuild -scheme Agency -destination 'platform=iOS Simulator,name=iPhone Air' test` (OS 26 simulator).
+- Build: `xcodebuild -scheme Agency -destination 'platform=macOS' build`.
+- Tests: `xcodebuild -scheme Agency -destination 'platform=macOS' test` (OS 26 simulator).
 
 ## Coding Style & Naming Conventions
 - Prefer small composable SwiftUI views.
