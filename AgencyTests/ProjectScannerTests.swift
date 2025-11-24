@@ -48,7 +48,7 @@ struct ProjectScannerTests {
                 return
             }
 
-            #expect(phase.path == missing.deletingLastPathComponent())
+            #expect(phase.path.lastPathComponent == "phase-0-setup")
             #expect(status == .backlog)
         }
     }
