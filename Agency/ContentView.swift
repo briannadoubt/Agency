@@ -105,23 +105,30 @@ private struct DetailView: View {
 
     var body: some View {
         if let snapshot {
-            ScrollView {
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.large) {
-                    ProjectSummary(snapshot: snapshot)
+            VStack(spacing: 0) {
+                BoardHeader(title: "Agency Board",
+                            subtitle: headerSubtitle(from: snapshot))
 
-                    if let phase = selectedPhase(from: snapshot) {
-                        PhaseDetail(phase: phase) { card, status in
-                            await loader.moveCard(card, to: status)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.large) {
+                        ProjectSummary(snapshot: snapshot)
+
+                        if let phase = selectedPhase(from: snapshot) {
+                            PhaseDetail(phase: phase) { card, status in
+                                await loader.moveCard(card, to: status)
+                            }
+                            .id(phase.phase.number)
+                        } else {
+                            Text("Select a phase to see its cards.")
+                                .foregroundStyle(DesignTokens.Colors.textSecondary)
+                                .font(DesignTokens.Typography.body)
                         }
-                        .id(phase.phase.number)
-                    } else {
-                        Text("Select a phase to see its cards.")
-                            .foregroundStyle(DesignTokens.Colors.textSecondary)
-                            .font(DesignTokens.Typography.body)
                     }
+                    .padding(.horizontal, DesignTokens.Layout.boardHorizontalGutter)
+                    .padding(.vertical, DesignTokens.Layout.boardVerticalGutter)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(DesignTokens.Spacing.large)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DesignTokens.Colors.canvas)
             }
             .background(DesignTokens.Colors.canvas)
         } else {
@@ -143,6 +150,13 @@ private struct DetailView: View {
         guard let selectedPhaseNumber else { return nil }
         return snapshot.phases.first { $0.phase.number == selectedPhaseNumber }
     }
+
+    private func headerSubtitle(from snapshot: ProjectLoader.ProjectSnapshot) -> String {
+        if let phase = selectedPhase(from: snapshot) {
+            return "Phase \(phase.phase.number): \(phase.phase.label)"
+        }
+        return "Select a phase to see its cards."
+    }
 }
 
 private struct PhaseRow: View {
@@ -162,6 +176,26 @@ private struct PhaseRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+private struct BoardHeader: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.grid) {
+            Text(title)
+                .font(DesignTokens.Typography.titleLarge)
+                .foregroundStyle(DesignTokens.Colors.textPrimary)
+            Text(subtitle)
+                .font(DesignTokens.Typography.body)
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+        }
+        .padding(DesignTokens.Layout.headerPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial)
+        .overlay(Divider(), alignment: .bottom)
     }
 }
 
@@ -207,9 +241,7 @@ private struct ValidationIssuesView: View {
             }
         }
         .padding()
-        .background(DesignTokens.Colors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium))
-        .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium).stroke(DesignTokens.Colors.stroke, lineWidth: 1))
+        .surfaceStyle(DesignTokens.Surfaces.mutedPanel)
     }
 
     private func color(for severity: ValidationIssue.Severity) -> Color {
@@ -255,7 +287,7 @@ private struct PhaseDetail: View {
                         selectedCardPath: $selectedCardPath,
                         onMove: handleMove,
                         onSelect: handleSelect)
-                .frame(minHeight: 420)
+                .frame(minHeight: DesignTokens.Layout.boardMinimumHeight)
 
             CardInspector(card: selectedCard,
                           draft: $inspectorDraft)
@@ -331,7 +363,7 @@ private struct KanbanBoard: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: DesignTokens.Spacing.medium) {
+            HStack(alignment: .top, spacing: DesignTokens.Layout.boardColumnSpacing) {
                 ForEach(CardStatus.allCases, id: \.self) { status in
                     KanbanColumn(status: status,
                                  cards: cards(for: status),
@@ -339,12 +371,15 @@ private struct KanbanBoard: View {
                                  selectedCardPath: $selectedCardPath,
                                  onMove: onMove,
                                  onSelect: onSelect)
-                        .frame(width: 280)
+                        .frame(width: DesignTokens.Layout.boardColumnWidth)
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.horizontal, DesignTokens.Layout.boardHorizontalGutter)
+            .padding(.vertical, DesignTokens.Layout.boardVerticalGutter)
+            .frame(minWidth: DesignTokens.Layout.boardContentWidth, alignment: .leading)
             .animation(.snappy(duration: 0.22), value: phase.cards)
         }
+        .frame(minHeight: DesignTokens.Layout.boardMinimumHeight)
     }
 
     private func cards(for status: CardStatus) -> [Card] {
@@ -361,6 +396,8 @@ private struct KanbanColumn: View {
     let onSelect: (Card) -> Void
 
     @State private var isTargeted: Bool = false
+
+    private let columnCornerRadius = DesignTokens.Radius.large
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -401,9 +438,9 @@ private struct KanbanColumn: View {
         .padding(DesignTokens.Spacing.medium)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(columnBackground(isTargeted: isTargeted))
-        .overlay(RoundedRectangle(cornerRadius: 12)
+        .overlay(RoundedRectangle(cornerRadius: columnCornerRadius, style: .continuous)
             .stroke(columnBorder(isTargeted: isTargeted), lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: columnCornerRadius, style: .continuous))
         .dropDestination(for: CardDragItem.self) { items, _ in
             guard let item = items.first else { return false }
             draggingCardPath = item.path
@@ -415,7 +452,7 @@ private struct KanbanColumn: View {
     }
 
     private func columnBackground(isTargeted: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 12)
+        RoundedRectangle(cornerRadius: columnCornerRadius, style: .continuous)
             .fill(isTargeted ? DesignTokens.Colors.accent.opacity(0.16) : DesignTokens.Colors.surface)
     }
 
@@ -501,12 +538,8 @@ private struct CardTile: View {
         }
         .padding(DesignTokens.Spacing.small)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10)
-            .fill(DesignTokens.Colors.card))
-        .overlay(RoundedRectangle(cornerRadius: 10)
-            .stroke(borderColor, lineWidth: 1))
+        .surfaceStyle(DesignTokens.Surfaces.card(border: borderColor))
         .opacity(isGhosted ? 0.7 : 1)
-        .tokenShadow(DesignTokens.Shadows.card)
     }
 
     private var borderColor: Color {

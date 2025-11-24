@@ -69,8 +69,7 @@ struct CardInspector: View {
             }
         }
         .padding()
-        .background(RoundedRectangle(cornerRadius: 12).fill(DesignTokens.Colors.surface))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(DesignTokens.Colors.stroke, lineWidth: 1))
+        .surfaceStyle(DesignTokens.Surfaces.panel)
     }
 
     private func openInEditor(_ card: Card) {
