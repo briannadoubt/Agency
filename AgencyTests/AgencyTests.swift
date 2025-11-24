@@ -12,6 +12,15 @@ import Testing
 struct AgencyTests {
 
     @MainActor
+    @Test func phaseParsesNumberAndLabelFromDirectoryName() throws {
+        let url = URL(fileURLWithPath: "/tmp/project/phase-7-integration", isDirectory: true)
+        let phase = try Phase(path: url)
+
+        #expect(phase.number == 7)
+        #expect(phase.label == "integration")
+    }
+
+    @MainActor
     @Test func watcherRefreshesWhenNewPhaseAppears() async throws {
         let fileManager = FileManager.default
         let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -58,6 +67,30 @@ struct AgencyTests {
         }
 
         #expect(sawNewPhase)
+    }
+
+    @MainActor
+    @Test func scannerReturnsPhasesInNumericOrder() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let projectURL = tempRoot.appendingPathComponent(ProjectConventions.projectRootName, isDirectory: true)
+        let phaseURLs = [
+            projectURL.appendingPathComponent("phase-2-beta", isDirectory: true),
+            projectURL.appendingPathComponent("phase-0-alpha", isDirectory: true),
+            projectURL.appendingPathComponent("phase-1-delta", isDirectory: true)
+        ]
+
+        for phaseURL in phaseURLs {
+            try makePhaseDirectories(at: phaseURL, fileManager: fileManager)
+        }
+
+        let snapshots = try ProjectScanner(fileManager: fileManager).scan(rootURL: tempRoot)
+
+        #expect(snapshots.map { $0.phase.number } == [0, 1, 2])
+        #expect(snapshots.map { $0.phase.label } == ["alpha", "delta", "beta"])
     }
 
     @MainActor
