@@ -16,12 +16,12 @@
 
 ## Toolchain & Platforms
 - Swift 6.2; Xcode 26; macOS 26 host.
-- Target OSes: iOS/iPadOS/watchOS/tvOS/visionOS 26 (matching simulators).
+- Target OS: macOS 26.
 
 ## Build, Test, and Development Commands
 - Open: `open Agency.xcodeproj` (scheme `Agency`).
-- Build: `xcodebuild -scheme Agency -destination 'platform=iOS Simulator,name=iPhone Air' build`.
-- Tests: `xcodebuild -scheme Agency -destination 'platform=iOS Simulator,name=iPhone Air' test` (OS 26 simulator).
+- Build: `xcodebuild -scheme Agency -destination 'platform=macOS' build`.
+- Tests: `xcodebuild -scheme Agency -destination 'platform=macOS' test` (OS 26 simulator).
 
 ## Coding Style & Naming Conventions
 - Prefer small composable SwiftUI views.
