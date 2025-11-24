@@ -6,7 +6,7 @@ enum CardStatus: String, CaseIterable {
     case inProgress = "in-progress"
     case done = "done"
 
-    var folderName: String { rawValue }
+    nonisolated var folderName: String { rawValue }
 }
 
 /// Describes a validation issue discovered while checking project conventions.

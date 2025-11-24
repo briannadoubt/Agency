@@ -21,6 +21,8 @@ final class ProjectLoader {
     private let validator: ConventionsValidator
     private let watcher: ProjectScannerWatching
     private let fileManager: FileManager
+    private let scanner: ProjectScanner
+    private let cardMover: CardMover
 
     private var watchTask: Task<Void, Never>?
     private var scopedAccess: SecurityScopedAccess?
@@ -30,11 +32,15 @@ final class ProjectLoader {
     init(bookmarkStore: ProjectBookmarkStore = ProjectBookmarkStore(),
          validator: ConventionsValidator = ConventionsValidator(),
          watcher: ProjectScannerWatching = ProjectScannerWatcher(),
-         fileManager: FileManager = .default) {
+         fileManager: FileManager = .default,
+         scanner: ProjectScanner = ProjectScanner(),
+         cardMover: CardMover = CardMover()) {
         self.bookmarkStore = bookmarkStore
         self.validator = validator
         self.watcher = watcher
         self.fileManager = fileManager
+        self.scanner = scanner
+        self.cardMover = cardMover
     }
 
     @MainActor deinit {
@@ -58,6 +64,22 @@ final class ProjectLoader {
     func loadProject(at url: URL) {
         let access = SecurityScopedAccess(url: url.standardizedFileURL)
         beginLoading(access: access, persistBookmark: true)
+    }
+
+    func moveCard(_ card: Card, to status: CardStatus) async -> Result<Void, CardMoveError> {
+        guard let snapshot = loadedSnapshot else {
+            return .failure(.snapshotUnavailable)
+        }
+
+        do {
+            try await cardMover.move(card: card, to: status, rootURL: snapshot.rootURL)
+            await refreshSnapshot(afterFilesystemChangeAt: snapshot.rootURL)
+            return .success(())
+        } catch let moveError as CardMoveError {
+            return .failure(moveError)
+        } catch {
+            return .failure(.moveFailed(error.localizedDescription))
+        }
     }
 
     private func beginLoading(access: SecurityScopedAccess, persistBookmark: Bool) {
@@ -104,6 +126,18 @@ final class ProjectLoader {
                     state = .failed(error.localizedDescription)
                 }
             }
+        }
+    }
+
+    private func refreshSnapshot(afterFilesystemChangeAt rootURL: URL) async {
+        do {
+            let phases = try scanner.scan(rootURL: rootURL)
+            let issues = validator.validateProject(at: rootURL)
+            state = .loaded(ProjectSnapshot(rootURL: rootURL,
+                                            phases: phases,
+                                            validationIssues: issues))
+        } catch {
+            state = .failed(error.localizedDescription)
         }
     }
 
