@@ -48,12 +48,11 @@ struct ContentView: View {
 
                 if let snapshot = loader.loadedSnapshot {
                     Section("Phases") {
-                        ForEach(snapshot.phases, id: \.phase.number) { phase in
-                            PhaseRow(phase: phase)
+                        ForEach(orderedPhases(from: snapshot), id: \.phase.number) { phase in
+                            PhaseRow(phase: phase,
+                                     isSelected: selectedPhaseNumber == phase.phase.number)
                                 .tag(phase.phase.number)
-                                .onTapGesture {
-                                    selectedPhaseNumber = phase.phase.number
-                                }
+                                .listRowBackground(phaseRowBackground(isSelected: selectedPhaseNumber == phase.phase.number))
                         }
                     }
                 }
@@ -80,9 +79,7 @@ struct ContentView: View {
             loader.restoreBookmarkIfAvailable()
         }
         .onChange(of: loader.loadedSnapshot) { _, snapshot in
-            guard selectedPhaseNumber == nil,
-                  let first = snapshot?.phases.first?.phase.number else { return }
-            selectedPhaseNumber = first
+            syncSelection(with: snapshot)
         }
         .alert("Unable to open folder", isPresented: Binding(get: { importError != nil },
                                                             set: { newValue in
@@ -94,6 +91,34 @@ struct ContentView: View {
         } message: {
             Text(importError ?? "")
         }
+    }
+
+    private func orderedPhases(from snapshot: ProjectLoader.ProjectSnapshot) -> [PhaseSnapshot] {
+        snapshot.phases.sorted { lhs, rhs in
+            if lhs.phase.number == rhs.phase.number { return lhs.phase.label < rhs.phase.label }
+            return lhs.phase.number < rhs.phase.number
+        }
+    }
+
+    private func syncSelection(with snapshot: ProjectLoader.ProjectSnapshot?) {
+        guard let snapshot else {
+            selectedPhaseNumber = nil
+            return
+        }
+
+        let phases = orderedPhases(from: snapshot)
+
+        if let selectedPhaseNumber,
+           phases.contains(where: { $0.phase.number == selectedPhaseNumber }) {
+            return
+        }
+
+        selectedPhaseNumber = phases.first?.phase.number
+    }
+
+    private func phaseRowBackground(isSelected: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 8)
+            .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
     }
 }
 
@@ -109,6 +134,7 @@ private struct DetailView: View {
 
                     if let phase = selectedPhase(from: snapshot) {
                         PhaseDetail(phase: phase)
+                            .id(phase.phase.number)
                     } else {
                         Text("Select a phase to see its cards.")
                             .foregroundStyle(.secondary)
@@ -117,6 +143,7 @@ private struct DetailView: View {
                 .padding()
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .id(selectedPhaseNumber ?? -1)
             .background(Color(.textBackgroundColor))
         } else {
             VStack(spacing: 12) {
@@ -141,21 +168,25 @@ private struct DetailView: View {
 
 private struct PhaseRow: View {
     let phase: PhaseSnapshot
+    let isSelected: Bool
 
     var body: some View {
         HStack {
             VStack(alignment: .leading) {
                 Text("Phase \(phase.phase.number): \(phase.phase.label)")
                     .font(.headline)
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
                 Text("\(phase.cards.count) card(s)")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isSelected ? Color.accentColor.opacity(0.85) : .secondary)
             }
             Spacer()
             Image(systemName: "chevron.right")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isSelected ? Color.accentColor : .secondary)
         }
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
     }
 }
 
