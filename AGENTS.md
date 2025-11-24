@@ -10,9 +10,21 @@
 
 ## Task Execution Workflow (agent default)
 - Open `PROJECT_WORKFLOW.md` before acting; required step list.
-- Backlog sequencing: work the lowest-numbered card in `project/**/backlog/`; if already in `in-progress/`, finish it first.
-- When a backlog path is provided, resolve from repo root and ensure it still lives under `project/**/backlog/` or abort.
-- Standard lane: `git checkout main && git pull --ff-only origin main` → `git checkout -b implement/<slug>` → `git mv` card to `in-progress/` and set status → build/implement/tests → `git commit -m "Implement <slug>"` → run tests → pause for review → move card to `done/`, update status/history, `git commit -m "Complete <slug>"`; run `git status` before finishing.
+- Backlog sequencing is numeric: always work on the card whose filename in `project/**/backlog/` has the lowest leading numeral. If that card is already in `in-progress/`, finish it (move to `done/`) before selecting the next numeral. See `project/phase-1-core-shared-layer/README.md` for per-phase reminders.
+- When given a backlog file path as the first message of a conversation, resolve it relative to the repo root, ensure it still lives under `project/**/backlog/`, and abort if it moved elsewhere.
+    - Create a branch named `implement/<kebab-slug>` (kebab slug = filename without extension, lowercased, non-alphanumeric collapsed to `-`).
+    - Run the standard lane progression for that card:
+      1. `git checkout main && git pull --ff-only origin main`.
+      2. `git checkout -b implement/<slug>`.
+      3. `git mv` the card to the sibling `in-progress/` directory and change its Status to “In Progress.” Capture checklist notes locally so acceptance criteria stay visible.
+      4. Implement the requirements in the appropriate module(s), respecting the downhill dependency flow called out above. Check off the working notes as the work is completed.
+      5. Add/adjust Swift Testing test suites (unit + `Tests/NumenIntegrationTests` when behavior crosses module boundaries).
+      6. Build frequently via `make ACTION=build TARGET=Numen`.
+      7. Stage all related files (code, docs, backlog card) and commit `Implement <slug>`.
+      8. Run `make ACTION=test` (or backlog-specified tests) and fix failures, amending the prior commit if necessary.
+      9. Stop here and ask the user to review the work before moving anything to done.
+      10. Move the backlog file to `done/`, update its Status to “Done/Complete,” check off the working notes, and commit `Complete <slug>`.
+    - Always `git status` before finishing to confirm no extra files are touched. Pushing/PRs happen outside the automation.
 
 ## Toolchain & Platforms
 - Swift 6.2; Xcode 26; macOS 26 host.
