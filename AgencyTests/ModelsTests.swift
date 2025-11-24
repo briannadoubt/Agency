@@ -68,6 +68,13 @@ struct ModelsTests {
             "parallelizable"
         ])
 
+        #expect(card.title == "0.2 Models")
+        #expect(card.summary == "Define conceptual models for phases and cards used by the kanban app.")
+        #expect(card.acceptanceCriteria.count == 2)
+        #expect(card.acceptanceCriteria.first?.title.contains("Phase model") == true)
+        #expect(card.acceptanceCriteria.allSatisfy { $0.isComplete == false })
+        #expect(card.notes?.contains("card code") == true)
+        #expect(card.history.first == "2025-11-22: Card created by agent.")
         #expect(card.section(named: "Summary")?.content.contains("conceptual models") == true)
         #expect(card.section(named: "Acceptance Criteria")?.content.contains("Phase model") == true)
         #expect(card.sections.last?.title == "History")
@@ -94,5 +101,29 @@ struct ModelsTests {
         #expect(card.status == .backlog)
         #expect(card.frontmatter.parallelizable == nil)
         #expect(card.section(named: "Summary")?.content == "Capture roadmap milestones.")
+        #expect(card.acceptanceCriteria.isEmpty)
+    }
+
+    @Test func acceptanceCriteriaCheckboxesAreCaptured() throws {
+        let fileURL = URL(fileURLWithPath: "/tmp/project/phase-2/product/backlog/2.1-launch.md")
+        let contents = """
+        ---
+        owner: bri
+        ---
+
+        # 2.1 Launch
+
+        Acceptance Criteria:
+        - [ ] Unchecked item
+        - [x] Completed item
+        - [X] Uppercase completed item
+        """
+
+        let card = try CardFileParser().parse(fileURL: fileURL, contents: contents)
+
+        #expect(card.acceptanceCriteria.count == 3)
+        #expect(card.acceptanceCriteria[0].isComplete == false)
+        #expect(card.acceptanceCriteria[1].isComplete == true)
+        #expect(card.acceptanceCriteria[2].isComplete == true)
     }
 }

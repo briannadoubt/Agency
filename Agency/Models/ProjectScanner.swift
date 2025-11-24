@@ -150,9 +150,9 @@ final class ProjectScannerWatcher {
             var lastSnapshot: [PhaseSnapshot]? = nil
 
             @MainActor
-            func emitCurrent() async {
+            func emitCurrent() {
                 do {
-                    let snapshots = try await scanner.scan(rootURL: rootURL)
+                    let snapshots = try scanner.scan(rootURL: rootURL)
                     if let last = lastSnapshot, last == snapshots { return }
                     lastSnapshot = snapshots
                     continuation.yield(.success(snapshots))
@@ -161,12 +161,12 @@ final class ProjectScannerWatcher {
                 }
             }
 
-            await emitCurrent()
+            emitCurrent()
 
             while !Task.isCancelled {
                 try? await Task.sleep(for: debounce)
                 if Task.isCancelled { break }
-                await emitCurrent()
+                emitCurrent()
             }
 
             continuation.finish()
