@@ -225,9 +225,16 @@ private struct PhaseDetail: View {
 
     @State private var draggingCardPath: String?
     @State private var moveError: CardMoveError?
+    @State private var selectedCardPath: String?
+    @State private var inspectorDraft = CardInspectorDraft.empty
 
     private var cardsByPath: [String: Card] {
         Dictionary(uniqueKeysWithValues: phase.cards.map { ($0.filePath.standardizedFileURL.path, $0) })
+    }
+
+    private var selectedCard: Card? {
+        guard let selectedCardPath else { return nil }
+        return cardsByPath[selectedCardPath]
     }
 
     var body: some View {
@@ -242,8 +249,13 @@ private struct PhaseDetail: View {
 
             KanbanBoard(phase: phase,
                         draggingCardPath: $draggingCardPath,
-                        onMove: handleMove)
+                        selectedCardPath: $selectedCardPath,
+                        onMove: handleMove,
+                        onSelect: handleSelect)
                 .frame(minHeight: 420)
+
+            CardInspector(card: selectedCard,
+                          draft: $inspectorDraft)
         }
         .alert("Move failed", isPresented: Binding(get: { moveError != nil },
                                                  set: { newValue in
@@ -254,6 +266,26 @@ private struct PhaseDetail: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(moveError?.localizedDescription ?? "Unknown error.")
+        }
+        .onChange(of: selectedCardPath) { _, newPath in
+            guard let newPath, let card = cardsByPath[newPath] else {
+                inspectorDraft = .empty
+                return
+            }
+            inspectorDraft = CardInspectorDraft(card: card)
+        }
+        .onChange(of: phase.cards) { _, updatedCards in
+            guard let selectedCardPath else {
+                inspectorDraft = .empty
+                return
+            }
+
+            if let updatedCard = updatedCards.first(where: { $0.filePath.standardizedFileURL.path == selectedCardPath }) {
+                inspectorDraft = CardInspectorDraft(card: updatedCard)
+            } else {
+                self.selectedCardPath = nil
+                inspectorDraft = .empty
+            }
         }
     }
 
@@ -278,12 +310,20 @@ private struct PhaseDetail: View {
             }
         }
     }
+
+    private func handleSelect(_ card: Card) {
+        let path = card.filePath.standardizedFileURL.path
+        selectedCardPath = path
+        inspectorDraft = CardInspectorDraft(card: card)
+    }
 }
 
 private struct KanbanBoard: View {
     let phase: PhaseSnapshot
     @Binding var draggingCardPath: String?
+    @Binding var selectedCardPath: String?
     let onMove: (String, CardStatus) -> Void
+    let onSelect: (Card) -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -292,7 +332,9 @@ private struct KanbanBoard: View {
                     KanbanColumn(status: status,
                                  cards: cards(for: status),
                                  draggingCardPath: $draggingCardPath,
-                                 onMove: onMove)
+                                 selectedCardPath: $selectedCardPath,
+                                 onMove: onMove,
+                                 onSelect: onSelect)
                         .frame(width: 280)
                 }
             }
@@ -310,7 +352,9 @@ private struct KanbanColumn: View {
     let status: CardStatus
     let cards: [Card]
     @Binding var draggingCardPath: String?
+    @Binding var selectedCardPath: String?
     let onMove: (String, CardStatus) -> Void
+    let onSelect: (Card) -> Void
 
     @State private var isTargeted: Bool = false
 
@@ -325,10 +369,16 @@ private struct KanbanColumn: View {
                             .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
                     } else {
                         ForEach(cards, id: \.filePath) { card in
+                            let cardPath = card.filePath.standardizedFileURL.path
                             CardTile(card: card,
-                                     isGhosted: draggingCardPath == card.filePath.standardizedFileURL.path)
+                                     isGhosted: draggingCardPath == cardPath,
+                                     isSelected: selectedCardPath == cardPath)
+                                .onTapGesture {
+                                    selectedCardPath = cardPath
+                                    onSelect(card)
+                                }
                                 .draggable(CardDragItem(path: card.filePath.standardizedFileURL.path)) {
-                                    CardTile(card: card, isGhosted: true)
+                                    CardTile(card: card, isGhosted: true, isSelected: false)
                                 }
                                 .dropDestination(for: CardDragItem.self) { items, _ in
                                     guard let item = items.first else { return false }
@@ -431,6 +481,7 @@ private struct EmptyColumnState: View {
 private struct CardTile: View {
     let card: Card
     let isGhosted: Bool
+    let isSelected: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -448,8 +499,14 @@ private struct CardTile: View {
         .background(RoundedRectangle(cornerRadius: 10)
             .fill(Color(.controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 10)
-            .stroke(isGhosted ? Color.accentColor : Color.clear, lineWidth: 1))
+            .stroke(borderColor, lineWidth: 1))
         .opacity(isGhosted ? 0.7 : 1)
+    }
+
+    private var borderColor: Color {
+        if isGhosted { return .accentColor }
+        if isSelected { return Color.accentColor.opacity(0.6) }
+        return Color.clear
     }
 }
 
