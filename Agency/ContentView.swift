@@ -410,8 +410,11 @@ private struct KanbanColumn: View {
                             .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
                     } else {
                         ForEach(cards, id: \.filePath) { card in
+                            let presentation = CardPresentation(card: card)
                             let cardPath = card.filePath.standardizedFileURL.path
+
                             CardTile(card: card,
+                                     presentation: presentation,
                                      isGhosted: draggingCardPath == cardPath,
                                      isSelected: selectedCardPath == cardPath)
                                 .onTapGesture {
@@ -419,7 +422,10 @@ private struct KanbanColumn: View {
                                     onSelect(card)
                                 }
                                 .draggable(CardDragItem(path: card.filePath.standardizedFileURL.path)) {
-                                    CardTile(card: card, isGhosted: true, isSelected: false)
+                                    CardTile(card: card,
+                                             presentation: presentation,
+                                             isGhosted: true,
+                                             isSelected: false)
                                 }
                                 .dropDestination(for: CardDragItem.self) { items, _ in
                                     guard let item = items.first else { return false }
@@ -522,54 +528,132 @@ private struct EmptyColumnState: View {
 
 private struct CardTile: View {
     let card: Card
+    let presentation: CardPresentation
     let isGhosted: Bool
     let isSelected: Bool
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            CardRow(card: card)
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovering = false
 
-            if !card.acceptanceCriteria.isEmpty {
-                let completed = card.acceptanceCriteria.filter(\.isComplete).count
-                let total = card.acceptanceCriteria.count
-                ProgressView(value: Double(completed), total: Double(total))
+    private let cornerRadius = DesignTokens.Radius.medium
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+            header
+
+            if let title = presentation.title, !title.isEmpty {
+                Text(title)
+                    .font(DesignTokens.Typography.headline)
+                    .foregroundStyle(DesignTokens.Colors.textPrimary)
+                    .lineLimit(1)
+            }
+
+            if let summary = presentation.summary, !summary.isEmpty {
+                Text(summary)
+                    .font(DesignTokens.Typography.body)
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+
+            metadataRow
+
+            if presentation.totalCriteria > 0 {
+                ProgressView(value: Double(presentation.completedCriteria), total: Double(presentation.totalCriteria))
                     .progressViewStyle(.linear)
+                    .tint(DesignTokens.Colors.accent)
             }
         }
-        .padding(DesignTokens.Spacing.small)
+        .padding(DesignTokens.Spacing.medium)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .surfaceStyle(DesignTokens.Surfaces.card(border: borderColor))
-        .opacity(isGhosted ? 0.7 : 1)
+        .background(shape.fill(backgroundColor))
+        .overlay(shape.stroke(borderColor, lineWidth: 1))
+        .tokenShadow(DesignTokens.Shadows.card)
+        .opacity(isGhosted ? 0.8 : 1)
+        .onHover { hovering in
+            if reduceMotion {
+                isHovering = hovering
+            } else {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    isHovering = hovering
+                }
+            }
+        }
+    }
+
+    private var backgroundColor: Color {
+        if isGhosted { return DesignTokens.Colors.card.opacity(0.92) }
+        if isSelected { return DesignTokens.Colors.card }
+        return isHovering ? DesignTokens.Colors.surfaceRaised : DesignTokens.Colors.card
     }
 
     private var borderColor: Color {
         if isGhosted { return DesignTokens.Colors.accent }
-        if isSelected { return DesignTokens.Colors.accent.opacity(0.7) }
-        return DesignTokens.Colors.strokeMuted
+        if isSelected { return DesignTokens.Colors.accent.opacity(0.8) }
+        return isHovering ? DesignTokens.Colors.stroke : DesignTokens.Colors.strokeMuted
+    }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(presentation.code)
+                .font(DesignTokens.Typography.code)
+                .padding(.horizontal, DesignTokens.Spacing.xSmall)
+                .padding(.vertical, DesignTokens.Spacing.grid)
+                .background(Capsule().fill(DesignTokens.Colors.stroke.opacity(0.55)))
+                .foregroundStyle(DesignTokens.Colors.textPrimary)
+
+            Spacer(minLength: DesignTokens.Spacing.small)
+
+            Text(presentation.riskLevel.label)
+                .font(DesignTokens.Typography.caption.weight(.semibold))
+                .badgeStyle(badgeStyle(for: presentation.riskLevel))
+                .accessibilityLabel("Risk \(presentation.riskLevel.label)")
+        }
+    }
+
+    private var metadataRow: some View {
+        HStack(spacing: DesignTokens.Spacing.xSmall) {
+            MetadataPill(icon: "person.fill", text: presentation.owner ?? "Unassigned")
+
+            MetadataPill(icon: "arrow.triangle.branch", text: presentation.branch ?? "No branch", emphasize: presentation.branch != nil)
+
+            MetadataPill(icon: "bolt.horizontal", text: presentation.agentStatus?.capitalized ?? "Idle")
+
+            MetadataPill(icon: "arrow.triangle.2.circlepath", text: presentation.parallelizable ? "Parallel" : "Serial", emphasize: presentation.parallelizable)
+        }
+    }
+
+    private func badgeStyle(for risk: RiskLevel) -> BadgeStyle {
+        switch risk {
+        case .low:
+            return DesignTokens.Badges.lowRisk
+        case .medium:
+            return DesignTokens.Badges.mediumRisk
+        case .high:
+            return DesignTokens.Badges.highRisk
+        }
     }
 }
 
-private struct CardRow: View {
-    let card: Card
+private struct MetadataPill: View {
+    let icon: String
+    let text: String
+    var emphasize: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if let title = card.title {
-                Text(title)
-                    .font(DesignTokens.Typography.headline)
-                    .foregroundStyle(DesignTokens.Colors.textPrimary)
-            }
-            Text(card.code)
+        HStack(spacing: DesignTokens.Spacing.grid) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+            Text(text)
                 .font(DesignTokens.Typography.caption)
-                .foregroundStyle(DesignTokens.Colors.textSecondary)
-
-            if let summary = card.summary, !summary.isEmpty {
-                Text(summary.trimmingCharacters(in: .whitespacesAndNewlines))
-                    .font(DesignTokens.Typography.body)
-                    .foregroundStyle(DesignTokens.Colors.textSecondary)
-            }
+                .lineLimit(1)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, DesignTokens.Spacing.small)
+        .padding(.vertical, DesignTokens.Spacing.grid)
+        .background(Capsule().fill(emphasize ? DesignTokens.Colors.accent.opacity(0.18) : DesignTokens.Colors.stroke.opacity(0.35)))
+        .foregroundStyle(emphasize ? DesignTokens.Colors.accent : DesignTokens.Colors.textSecondary)
     }
 }
 
