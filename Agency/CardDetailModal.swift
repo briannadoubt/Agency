@@ -239,7 +239,7 @@ struct CardDetailModal: View {
             rawDraft = writer.renderMarkdown(from: formDraft,
                                              basedOn: baseline.card,
                                              existingContents: baseline.contents,
-                                             appendHistory: appendHistory)
+                                             appendHistory: false)
         }
 
         if old == .raw && (new == .form || new == .view) {
@@ -267,6 +267,52 @@ struct CardDetailModal: View {
         pendingRawSnapshot = nil
     }
 
+    private func appendHistoryIfNeeded(to raw: String) -> String {
+        guard appendHistory,
+              let entry = CardDetailFormDraft.normalizedHistoryEntry(formDraft.newHistoryEntry) else { return raw }
+
+        let lines = raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var output: [String] = []
+        var didAppend = false
+        var inHistory = false
+
+        for line in lines {
+            if line.trimmingCharacters(in: .whitespaces) == "History:" {
+                inHistory = true
+                output.append(line)
+                continue
+            }
+
+            if inHistory {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.hasSuffix(":") && !trimmed.hasPrefix("-") {
+                    // Next section begins; insert before leaving history.
+                    if !didAppend {
+                        output.append("- \(entry)")
+                        didAppend = true
+                    }
+                    inHistory = false
+                }
+            }
+
+            output.append(line)
+        }
+
+        if inHistory && !didAppend {
+            output.append("- \(entry)")
+            didAppend = true
+        }
+
+        if !didAppend {
+            // No History section found; append a new one.
+            output.append("")
+            output.append("History:")
+            output.append("- \(entry)")
+        }
+
+        return output.joined(separator: "\n")
+    }
+
     @MainActor
     private func save() async {
         guard let snapshot else { return }
@@ -284,7 +330,8 @@ struct CardDetailModal: View {
                                                    appendHistory: appendHistory)
                 updated = try writer.saveMergedContents(merged, snapshot: snapshot)
             case .raw:
-                updated = try writer.saveRaw(rawDraft, snapshot: snapshot)
+                let mergedRaw = appendHistoryIfNeeded(to: rawDraft)
+                updated = try writer.saveRaw(mergedRaw, snapshot: snapshot)
             case .view:
                 return
             }
