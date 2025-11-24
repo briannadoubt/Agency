@@ -355,6 +355,7 @@ private struct PhaseDetail: View {
     private func handleSelect(_ card: Card) {
         let path = card.filePath.standardizedFileURL.path
         selectedCardPath = path
+        isShowingDetailModal = true
     }
 }
 

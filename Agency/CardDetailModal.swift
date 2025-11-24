@@ -275,6 +275,7 @@ struct CardDetailModal: View {
             self.snapshot = updated
             formDraft = CardDetailFormDraft.from(card: updated.card)
             rawDraft = updated.contents
+            appendHistory = false
             mode = .view
         } catch let error as CardSaveError {
             errorMessage = error.localizedDescription

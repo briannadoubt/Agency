@@ -44,9 +44,8 @@ struct CardDetailFormDraft: Equatable {
     }
 
     mutating func appendHistoryIfNeeded() {
-        let trimmed = newHistoryEntry.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        history.append(trimmed)
+        guard let entry = CardDetailFormDraft.normalizedHistoryEntry(newHistoryEntry) else { return }
+        history.append(entry)
         newHistoryEntry = CardDetailFormDraft.defaultHistoryPrefix(on: Date())
     }
 
@@ -60,6 +59,19 @@ struct CardDetailFormDraft: Equatable {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: date) + " - "
+    }
+
+    static func normalizedHistoryEntry(_ entry: String) -> String? {
+        let trimmed = entry.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let pattern = /^\d{4}-\d{2}-\d{2}\s*-\s*(.*)$/
+        if let match = trimmed.wholeMatch(of: pattern) {
+            let tail = match.1.trimmingCharacters(in: .whitespacesAndNewlines)
+            return tail.isEmpty ? nil : trimmed
+        }
+
+        return trimmed
     }
 }
 
@@ -134,11 +146,8 @@ struct CardMarkdownWriter {
         let notes = draft.notes.trimmingCharacters(in: .whitespacesAndNewlines)
         let criteria = draft.criteria
         var historyEntries = draft.history
-        if appendHistory {
-            let trimmed = draft.newHistoryEntry.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                historyEntries.append(trimmed)
-            }
+        if appendHistory, let entry = normalizedHistoryEntry(draft.newHistoryEntry) {
+            historyEntries.append(entry)
         }
 
         let updatedSections = mergeSections(existing: card.sections,
@@ -258,6 +267,19 @@ struct CardMarkdownWriter {
 
     private func renderHistory(_ entries: [String]) -> String {
         entries.map { "- \($0)" }.joined(separator: "\n")
+    }
+
+    private func normalizedHistoryEntry(_ entry: String) -> String? {
+        let trimmed = entry.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let pattern = /^\d{4}-\d{2}-\d{2}\s*-\s*(.*)$/
+        if let match = trimmed.wholeMatch(of: pattern) {
+            let tail = match.1.trimmingCharacters(in: .whitespacesAndNewlines)
+            return tail.isEmpty ? nil : trimmed
+        }
+
+        return trimmed
     }
 
     private func compose(frontmatter: [FrontmatterEntry],

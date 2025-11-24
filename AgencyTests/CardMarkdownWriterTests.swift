@@ -98,6 +98,25 @@ struct CardMarkdownWriterTests {
         #expect(disk == contents)
     }
 
+    @Test
+    func defaultHistoryPrefixDoesNotAppendWhenEmpty() throws {
+        let (fileURL, contents) = try makeTempCardFile()
+        let parser = CardFileParser()
+        let card = try parser.parse(fileURL: fileURL, contents: contents)
+        let writer = CardMarkdownWriter()
+        var snapshot = try writer.loadSnapshot(for: card)
+
+        var draft = CardDetailFormDraft.from(card: snapshot.card)
+        draft.newHistoryEntry = CardDetailFormDraft.defaultHistoryPrefix(on: Date()) // untouched prefix
+
+        snapshot = try writer.saveFormDraft(draft,
+                                            appendHistory: true,
+                                            snapshot: snapshot)
+
+        // History count should remain unchanged
+        #expect(snapshot.card.history.count == card.history.count)
+    }
+
     // MARK: Helpers
 
     private func makeTempCardFile() throws -> (URL, String) {
