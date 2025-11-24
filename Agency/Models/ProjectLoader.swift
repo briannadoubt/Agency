@@ -62,10 +62,11 @@ final class ProjectLoader {
 
     private func beginLoading(access: SecurityScopedAccess, persistBookmark: Bool) {
         scopedAccess?.stopAccessing()
-        scopedAccess = access
-        state = .loading(access.url)
+        let resolvedURL = access.url.standardizedFileURL
+        scopedAccess = SecurityScopedAccess(url: resolvedURL)
+        state = .loading(resolvedURL)
 
-        guard projectRootExists(at: access.url) else {
+        guard projectRootExists(at: resolvedURL) else {
             state = .failed("Selected folder must contain a project/ root.")
             scopedAccess?.stopAccessing()
             scopedAccess = nil
@@ -74,7 +75,7 @@ final class ProjectLoader {
 
         if persistBookmark {
             do {
-                try bookmarkStore.saveBookmark(for: access.url)
+                try bookmarkStore.saveBookmark(for: resolvedURL)
             } catch {
                 state = .failed("Unable to save folder bookmark: \(error.localizedDescription)")
                 scopedAccess?.stopAccessing()
@@ -83,7 +84,7 @@ final class ProjectLoader {
             }
         }
 
-        startWatchingProject(at: access.url)
+        startWatchingProject(at: resolvedURL)
     }
 
     private func startWatchingProject(at url: URL) {
@@ -140,11 +141,12 @@ struct ProjectBookmarkStore {
     }
 
     func saveBookmark(for url: URL) throws {
-        let data = try url.bookmarkData(options: [.withSecurityScope],
+        let resolved = url.standardizedFileURL
+        let data = try resolved.bookmarkData(options: [.withSecurityScope],
                                         includingResourceValuesForKeys: nil,
                                         relativeTo: nil)
         defaults.set(data, forKey: bookmarkKey)
-        defaults.set(url.path, forKey: pathKey)
+        defaults.set(resolved.path, forKey: pathKey)
     }
 
     func restoreBookmark() -> SecurityScopedAccess? {
@@ -157,12 +159,12 @@ struct ProjectBookmarkStore {
                 if isStale {
                     try? saveBookmark(for: url)
                 }
-                return SecurityScopedAccess(url: url)
+                return SecurityScopedAccess(url: url.standardizedFileURL)
             }
         }
 
         if let path = defaults.string(forKey: pathKey) {
-            let url = URL(fileURLWithPath: path)
+            let url = URL(fileURLWithPath: path).standardizedFileURL
             return SecurityScopedAccess(url: url)
         }
 
