@@ -1,5 +1,4 @@
 import Foundation
-import Dispatch
 
 struct PhaseSnapshot: Equatable {
     let phase: Phase
@@ -122,10 +121,7 @@ struct ProjectScanner {
 @MainActor
 final class ProjectScannerWatcher {
     private let scanner: ProjectScanner
-    private var sources: [DispatchSourceFileSystemObject] = []
-    private var debounceTask: Task<Void, Never>?
-    private var fileDescriptors: [CInt] = []
-    private let queue = DispatchQueue(label: "agency.project-scanner-watcher")
+    private var watchTask: Task<Void, Never>?
 
     init(scanner: ProjectScanner = ProjectScanner()) {
         self.scanner = scanner
@@ -134,16 +130,7 @@ final class ProjectScannerWatcher {
     func watch(rootURL: URL, debounce: Duration = .milliseconds(150)) -> AsyncStream<Result<[PhaseSnapshot], Error>> {
         AsyncStream { continuation in
             Task { @MainActor [weak self] in
-                guard let self else { return }
-
-                do {
-                    let initial = try scanner.scan(rootURL: rootURL)
-                    continuation.yield(.success(initial))
-                } catch {
-                    continuation.yield(.failure(error))
-                }
-
-                startWatching(rootURL: rootURL, debounce: debounce, continuation: continuation)
+                await self?.startWatchLoop(rootURL: rootURL, debounce: debounce, continuation: continuation)
             }
 
             continuation.onTermination = { [weak self] _ in
@@ -154,77 +141,41 @@ final class ProjectScannerWatcher {
         }
     }
 
-    private func startWatching(rootURL: URL, debounce: Duration, continuation: AsyncStream<Result<[PhaseSnapshot], Error>>.Continuation) {
+    private func startWatchLoop(rootURL: URL,
+                                debounce: Duration,
+                                continuation: AsyncStream<Result<[PhaseSnapshot], Error>>.Continuation) async {
         cancelWatching()
 
-        let directoriesToWatch = watchTargets(rootURL: rootURL)
+        watchTask = Task { @MainActor [scanner] in
+            var lastSnapshot: [PhaseSnapshot]? = nil
 
-        for directory in directoriesToWatch {
-            let fd = open(directory.path, O_EVTONLY)
-            guard fd != -1 else { continue }
-
-            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd,
-                                                                   eventMask: [.write, .extend, .delete, .rename],
-                                                                   queue: queue)
-
-            source.setEventHandler { [weak self] in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.scheduleDebouncedScan(rootURL: rootURL, debounce: debounce, continuation: continuation)
+            @MainActor
+            func emitCurrent() async {
+                do {
+                    let snapshots = try await scanner.scan(rootURL: rootURL)
+                    if let last = lastSnapshot, last == snapshots { return }
+                    lastSnapshot = snapshots
+                    continuation.yield(.success(snapshots))
+                } catch {
+                    continuation.yield(.failure(error))
                 }
             }
 
-            source.setCancelHandler { [weak self] in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    close(fd)
-                }
+            await emitCurrent()
+
+            while !Task.isCancelled {
+                try? await Task.sleep(for: debounce)
+                if Task.isCancelled { break }
+                await emitCurrent()
             }
 
-            fileDescriptors.append(fd)
-            sources.append(source)
-            source.resume()
-        }
-    }
-
-    private func scheduleDebouncedScan(rootURL: URL, debounce: Duration, continuation: AsyncStream<Result<[PhaseSnapshot], Error>>.Continuation) {
-        debounceTask?.cancel()
-        debounceTask = Task { @MainActor [scanner] in
-            try? await Task.sleep(for: debounce)
-            if Task.isCancelled { return }
-
-            let result = Result { try scanner.scan(rootURL: rootURL) }
-            continuation.yield(result)
+            continuation.finish()
         }
     }
 
     private func cancelWatching() {
-        debounceTask?.cancel()
-        debounceTask = nil
-
-        sources.forEach { $0.cancel() }
-        sources.removeAll()
-
-        fileDescriptors.removeAll()
-    }
-
-    private func watchTargets(rootURL: URL) -> [URL] {
-        let projectURL = rootURL.appendingPathComponent(ProjectConventions.projectRootName, isDirectory: true)
-        guard let phaseDirs = try? FileManager.default.contentsOfDirectory(at: projectURL,
-                                                                           includingPropertiesForKeys: [.isDirectoryKey],
-                                                                           options: [.skipsHiddenFiles]) else { return [projectURL] }
-
-        var targets: [URL] = [projectURL]
-
-        for phase in phaseDirs where (try? phase.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
-            targets.append(phase)
-            for status in CardStatus.allCases {
-                let statusURL = phase.appendingPathComponent(status.folderName, isDirectory: true)
-                targets.append(statusURL)
-            }
-        }
-
-        return targets
+        watchTask?.cancel()
+        watchTask = nil
     }
 }
 

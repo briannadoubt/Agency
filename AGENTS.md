@@ -17,6 +17,7 @@
 ## Toolchain & Platforms
 - Swift 6.2; Xcode 26; macOS 26 host.
 - Target OS: macOS 26.
+- Swift Concurrency DO NOT USE DISPATCHQUEUES
 
 ## Build, Test, and Development Commands
 - Open: `open Agency.xcodeproj` (scheme `Agency`).
