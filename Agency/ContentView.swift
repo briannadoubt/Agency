@@ -261,7 +261,7 @@ private struct PhaseDetail: View {
     @State private var draggingCardPath: String?
     @State private var moveError: CardMoveError?
     @State private var selectedCardPath: String?
-    @State private var inspectorDraft = CardInspectorDraft.empty
+    @State private var isShowingDetailModal = false
 
     private var cardsByPath: [String: Card] {
         Dictionary(uniqueKeysWithValues: phase.cards.map { ($0.filePath.standardizedFileURL.path, $0) })
@@ -289,8 +289,6 @@ private struct PhaseDetail: View {
                         onSelect: handleSelect)
                 .frame(minHeight: DesignTokens.Layout.boardMinimumHeight)
 
-            CardInspector(card: selectedCard,
-                          draft: $inspectorDraft)
         }
         .alert("Move failed", isPresented: Binding(get: { moveError != nil },
                                                  set: { newValue in
@@ -303,24 +301,31 @@ private struct PhaseDetail: View {
             Text(moveError?.localizedDescription ?? "Unknown error.")
                 .foregroundStyle(DesignTokens.Colors.textPrimary)
         }
+        .sheet(isPresented: $isShowingDetailModal) {
+            if let selectedCard {
+                CardDetailModal(card: selectedCard,
+                                phase: phase.phase)
+                    .presentationDetents([.large])
+            }
+        }
         .onChange(of: selectedCardPath) { _, newPath in
-            guard let newPath, let card = cardsByPath[newPath] else {
-                inspectorDraft = .empty
+            guard let newPath, cardsByPath[newPath] != nil else {
+                isShowingDetailModal = false
                 return
             }
-            inspectorDraft = CardInspectorDraft(card: card)
+            isShowingDetailModal = true
         }
         .onChange(of: phase.cards) { _, updatedCards in
             guard let selectedCardPath else {
-                inspectorDraft = .empty
+                isShowingDetailModal = false
                 return
             }
 
-            if let updatedCard = updatedCards.first(where: { $0.filePath.standardizedFileURL.path == selectedCardPath }) {
-                inspectorDraft = CardInspectorDraft(card: updatedCard)
+            if updatedCards.contains(where: { $0.filePath.standardizedFileURL.path == selectedCardPath }) {
+                // Keep showing modal with updated card
             } else {
                 self.selectedCardPath = nil
-                inspectorDraft = .empty
+                isShowingDetailModal = false
             }
         }
     }
@@ -350,7 +355,6 @@ private struct PhaseDetail: View {
     private func handleSelect(_ card: Card) {
         let path = card.filePath.standardizedFileURL.path
         selectedCardPath = path
-        inspectorDraft = CardInspectorDraft(card: card)
     }
 }
 
