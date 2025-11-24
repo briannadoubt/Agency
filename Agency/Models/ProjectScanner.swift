@@ -1,3 +1,4 @@
+import CoreServices
 import Foundation
 
 struct PhaseSnapshot: Equatable {
@@ -117,11 +118,14 @@ struct ProjectScanner {
     }
 }
 
+protocol ProjectScannerWatching {
+    func watch(rootURL: URL, debounce: Duration) -> AsyncStream<Result<[PhaseSnapshot], Error>>
+}
+
 /// Watches the project folder and emits debounced scan results when changes occur.
 @MainActor
-final class ProjectScannerWatcher {
+final class ProjectScannerWatcher: ProjectScannerWatching {
     private let scanner: ProjectScanner
-    private var watchTask: Task<Void, Never>?
 
     init(scanner: ProjectScanner = ProjectScanner()) {
         self.scanner = scanner
@@ -129,57 +133,178 @@ final class ProjectScannerWatcher {
 
     func watch(rootURL: URL, debounce: Duration = .milliseconds(150)) -> AsyncStream<Result<[PhaseSnapshot], Error>> {
         AsyncStream { continuation in
-            Task { @MainActor [weak self] in
-                await self?.startWatchLoop(rootURL: rootURL, debounce: debounce, continuation: continuation)
-            }
+            let scheduler = ProjectScanScheduler(scanner: scanner,
+                                                 rootURL: rootURL,
+                                                 debounce: debounce,
+                                                 continuation: continuation)
+            scheduler.start()
 
-            continuation.onTermination = { [weak self] _ in
+            continuation.onTermination = { _ in
                 Task { @MainActor in
-                    self?.cancelWatching()
+                    scheduler.stop()
                 }
             }
         }
-    }
-
-    private func startWatchLoop(rootURL: URL,
-                                debounce: Duration,
-                                continuation: AsyncStream<Result<[PhaseSnapshot], Error>>.Continuation) async {
-        cancelWatching()
-
-        watchTask = Task { @MainActor [scanner] in
-            var lastSnapshot: [PhaseSnapshot]? = nil
-
-            @MainActor
-            func emitCurrent() {
-                do {
-                    let snapshots = try scanner.scan(rootURL: rootURL)
-                    if let last = lastSnapshot, last == snapshots { return }
-                    lastSnapshot = snapshots
-                    continuation.yield(.success(snapshots))
-                } catch {
-                    continuation.yield(.failure(error))
-                }
-            }
-
-            emitCurrent()
-
-            while !Task.isCancelled {
-                try? await Task.sleep(for: debounce)
-                if Task.isCancelled { break }
-                emitCurrent()
-            }
-
-            continuation.finish()
-        }
-    }
-
-    private func cancelWatching() {
-        watchTask?.cancel()
-        watchTask = nil
     }
 }
 
 extension Card {
     /// Returns the `parallelizable` flag defaulting to `false` when omitted.
     var isParallelizable: Bool { frontmatter.parallelizable ?? false }
+}
+
+@MainActor
+private final class ProjectScanScheduler {
+    private let scanner: ProjectScanner
+    private let rootURL: URL
+    private let debounce: Duration
+    private let continuation: AsyncStream<Result<[PhaseSnapshot], Error>>.Continuation
+
+    private var debouncedTask: Task<Void, Never>?
+    private var pollTask: Task<Void, Never>?
+    private var changeStream: FileSystemChangeStream?
+    private var lastSnapshot: [PhaseSnapshot]?
+
+    init(scanner: ProjectScanner,
+         rootURL: URL,
+         debounce: Duration,
+         continuation: AsyncStream<Result<[PhaseSnapshot], Error>>.Continuation) {
+        self.scanner = scanner
+        self.rootURL = rootURL
+        self.debounce = debounce
+        self.continuation = continuation
+    }
+
+    func start() {
+        scheduleImmediateScan()
+        attachChangeStream()
+    }
+
+    func stop() {
+        debouncedTask?.cancel()
+        debouncedTask = nil
+        pollTask?.cancel()
+        pollTask = nil
+        changeStream?.stop()
+        changeStream = nil
+    }
+
+    private func attachChangeStream() {
+        let stream = FileSystemChangeStream(rootURL: rootURL, debounce: debounce) { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.scheduleScan()
+            }
+        }
+
+        if let stream, stream.start() {
+            changeStream = stream
+        } else {
+            pollTask = Task { @MainActor in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: debounce)
+                    await performScan()
+                }
+            }
+        }
+    }
+
+    private func scheduleImmediateScan() {
+        debouncedTask?.cancel()
+        debouncedTask = Task { @MainActor [weak self] in
+            await self?.performScan()
+        }
+    }
+
+    private func scheduleScan() {
+        debouncedTask?.cancel()
+        let delay = debounce
+        debouncedTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            if Task.isCancelled { return }
+            await self?.performScan()
+        }
+    }
+
+    private func performScan() async {
+        do {
+            let snapshots = try scanner.scan(rootURL: rootURL)
+            if let lastSnapshot, lastSnapshot == snapshots {
+                return
+            }
+            lastSnapshot = snapshots
+            continuation.yield(.success(snapshots))
+        } catch {
+            continuation.yield(.failure(error))
+        }
+    }
+}
+
+@MainActor
+private final class FileSystemChangeStream {
+    private let rootURL: URL
+    private let latency: Duration
+    private let onEvent: () -> Void
+    private var stream: FSEventStreamRef?
+
+    init?(rootURL: URL, debounce: Duration, onEvent: @escaping () -> Void) {
+        guard rootURL.isFileURL else { return nil }
+        self.rootURL = rootURL
+        self.latency = debounce
+        self.onEvent = onEvent
+    }
+
+    @MainActor deinit {
+        stop()
+    }
+
+    func start() -> Bool {
+        var context = FSEventStreamContext(version: 0,
+                                           info: Unmanaged.passUnretained(self).toOpaque(),
+                                           retain: nil,
+                                           release: nil,
+                                           copyDescription: nil)
+
+        let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents |
+                                             kFSEventStreamCreateFlagUseCFTypes |
+                                             kFSEventStreamCreateFlagNoDefer)
+
+        guard let stream = FSEventStreamCreate(nil,
+                                               { _, info, _, _, _, _ in
+                                                   guard let info else { return }
+                                                   let watcher = Unmanaged<FileSystemChangeStream>
+                                                       .fromOpaque(info)
+                                                       .takeUnretainedValue()
+                                                   watcher.handleEvent()
+                                               },
+                                               &context,
+                                               [rootURL.path] as CFArray,
+                                               FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+                                               latencySeconds(from: latency),
+                                               flags) else { return false }
+
+        self.stream = stream
+
+        FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+        FSEventStreamStart(stream)
+        return true
+    }
+
+    func stop() {
+        guard let stream else { return }
+        FSEventStreamStop(stream)
+        FSEventStreamInvalidate(stream)
+        FSEventStreamRelease(stream)
+        self.stream = nil
+    }
+
+    private func handleEvent() {
+        onEvent()
+    }
+}
+
+private func latencySeconds(from duration: Duration) -> CFTimeInterval {
+    let components = duration.components
+    let seconds = Double(components.seconds)
+    let attoseconds = Double(components.attoseconds) / 1_000_000_000_000_000_000.0
+    return seconds + attoseconds
 }
