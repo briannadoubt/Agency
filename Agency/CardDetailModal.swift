@@ -232,10 +232,13 @@ struct CardDetailModal: View {
     private func syncDraftsForModeChange(from old: CardDetailMode, to new: CardDetailMode) {
         guard snapshot != nil else { return }
 
-        if old == .form && new == .raw {
+        if old != .raw && new == .raw {
+            let baseline = pendingRawSnapshot ?? snapshot
+            guard let baseline else { return }
+
             rawDraft = writer.renderMarkdown(from: formDraft,
-                                             basedOn: snapshot!.card,
-                                             existingContents: snapshot!.contents,
+                                             basedOn: baseline.card,
+                                             existingContents: baseline.contents,
                                              appendHistory: appendHistory)
         }
 
