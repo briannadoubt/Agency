@@ -132,6 +132,7 @@ struct SecurityScopedAccess: Equatable {
 struct ProjectBookmarkStore {
     private let defaults: UserDefaults
     private let bookmarkKey: String
+    private var pathKey: String { "\(bookmarkKey).path" }
 
     init(defaults: UserDefaults = .standard, bookmarkKey: String = "projectBookmark") {
         self.defaults = defaults
@@ -143,27 +144,33 @@ struct ProjectBookmarkStore {
                                         includingResourceValuesForKeys: nil,
                                         relativeTo: nil)
         defaults.set(data, forKey: bookmarkKey)
+        defaults.set(url.path, forKey: pathKey)
     }
 
     func restoreBookmark() -> SecurityScopedAccess? {
-        guard let data = defaults.data(forKey: bookmarkKey) else { return nil }
-
-        var isStale = false
-        guard let url = try? URL(resolvingBookmarkData: data,
-                                 options: [.withSecurityScope],
-                                 relativeTo: nil,
-                                 bookmarkDataIsStale: &isStale) else {
-            return nil
+        if let data = defaults.data(forKey: bookmarkKey) {
+            var isStale = false
+            if let url = try? URL(resolvingBookmarkData: data,
+                                  options: [.withSecurityScope],
+                                  relativeTo: nil,
+                                  bookmarkDataIsStale: &isStale) {
+                if isStale {
+                    try? saveBookmark(for: url)
+                }
+                return SecurityScopedAccess(url: url)
+            }
         }
 
-        if isStale {
-            try? saveBookmark(for: url)
+        if let path = defaults.string(forKey: pathKey) {
+            let url = URL(fileURLWithPath: path)
+            return SecurityScopedAccess(url: url)
         }
 
-        return SecurityScopedAccess(url: url)
+        return nil
     }
 
     func clearBookmark() {
         defaults.removeObject(forKey: bookmarkKey)
+        defaults.removeObject(forKey: pathKey)
     }
 }
