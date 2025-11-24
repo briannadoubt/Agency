@@ -239,7 +239,14 @@ struct CardDetailModal: View {
 
         if old == .raw && (new == .form || new == .view) {
             do {
-                formDraft = try writer.formDraft(fromRaw: rawDraft, fileURL: snapshot!.card.filePath)
+                let parsedCard = try writer.formDraft(fromRaw: rawDraft, fileURL: snapshot!.card.filePath)
+                formDraft = parsedCard
+
+                // Replace snapshot with the parsed raw state so subsequent form saves include raw edits.
+                let parsed = try CardFileParser().parse(fileURL: snapshot!.card.filePath, contents: rawDraft)
+                snapshot = CardDocumentSnapshot(card: parsed,
+                                               contents: rawDraft,
+                                               modifiedAt: snapshot!.modifiedAt)
             } catch {
                 errorMessage = error.localizedDescription
                 mode = .raw
