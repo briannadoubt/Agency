@@ -122,9 +122,9 @@ struct ProjectScanner {
 @MainActor
 final class ProjectScannerWatcher {
     private let scanner: ProjectScanner
-    private var source: DispatchSourceFileSystemObject?
+    private var sources: [DispatchSourceFileSystemObject] = []
     private var debounceTask: Task<Void, Never>?
-    private var fileDescriptor: CInt = -1
+    private var fileDescriptors: [CInt] = []
     private let queue = DispatchQueue(label: "agency.project-scanner-watcher")
 
     init(scanner: ProjectScanner = ProjectScanner()) {
@@ -157,30 +157,34 @@ final class ProjectScannerWatcher {
     private func startWatching(rootURL: URL, debounce: Duration, continuation: AsyncStream<Result<[PhaseSnapshot], Error>>.Continuation) {
         cancelWatching()
 
-        fileDescriptor = open(rootURL.appendingPathComponent(ProjectConventions.projectRootName).path, O_EVTONLY)
-        guard fileDescriptor != -1 else { return }
+        let directoriesToWatch = watchTargets(rootURL: rootURL)
 
-        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fileDescriptor,
-                                                               eventMask: [.write, .extend, .delete, .rename],
-                                                               queue: queue)
+        for directory in directoriesToWatch {
+            let fd = open(directory.path, O_EVTONLY)
+            guard fd != -1 else { continue }
 
-        source.setEventHandler { [weak self] in
-            guard let self else { return }
-            self.scheduleDebouncedScan(rootURL: rootURL, debounce: debounce, continuation: continuation)
-        }
+            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd,
+                                                                   eventMask: [.write, .extend, .delete, .rename],
+                                                                   queue: queue)
 
-        source.setCancelHandler { [weak self] in
-            Task { @MainActor in
-                guard let self else { return }
-                if self.fileDescriptor != -1 {
-                    close(self.fileDescriptor)
-                    self.fileDescriptor = -1
+            source.setEventHandler { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.scheduleDebouncedScan(rootURL: rootURL, debounce: debounce, continuation: continuation)
                 }
             }
-        }
 
-        self.source = source
-        source.resume()
+            source.setCancelHandler { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    close(fd)
+                }
+            }
+
+            fileDescriptors.append(fd)
+            sources.append(source)
+            source.resume()
+        }
     }
 
     private func scheduleDebouncedScan(rootURL: URL, debounce: Duration, continuation: AsyncStream<Result<[PhaseSnapshot], Error>>.Continuation) {
@@ -198,13 +202,30 @@ final class ProjectScannerWatcher {
         debounceTask?.cancel()
         debounceTask = nil
 
-        source?.cancel()
-        source = nil
+        sources.forEach { $0.cancel() }
+        sources.removeAll()
 
-        if fileDescriptor != -1 {
-            close(fileDescriptor)
-            fileDescriptor = -1
+        fileDescriptors.forEach { close($0) }
+        fileDescriptors.removeAll()
+    }
+
+    private func watchTargets(rootURL: URL) -> [URL] {
+        let projectURL = rootURL.appendingPathComponent(ProjectConventions.projectRootName, isDirectory: true)
+        guard let phaseDirs = try? FileManager.default.contentsOfDirectory(at: projectURL,
+                                                                           includingPropertiesForKeys: [.isDirectoryKey],
+                                                                           options: [.skipsHiddenFiles]) else { return [projectURL] }
+
+        var targets: [URL] = [projectURL]
+
+        for phase in phaseDirs where (try? phase.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            targets.append(phase)
+            for status in CardStatus.allCases {
+                let statusURL = phase.appendingPathComponent(status.folderName, isDirectory: true)
+                targets.append(statusURL)
+            }
         }
+
+        return targets
     }
 }
 
