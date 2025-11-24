@@ -106,7 +106,20 @@ final class ProjectLoader {
             }
         }
 
+        loadSnapshot(at: resolvedURL)
         startWatchingProject(at: resolvedURL)
+    }
+
+    private func loadSnapshot(at url: URL) {
+        do {
+            let phases = try scanner.scan(rootURL: url)
+            let issues = validator.validateProject(at: url)
+            state = .loaded(ProjectSnapshot(rootURL: url,
+                                            phases: phases,
+                                            validationIssues: issues))
+        } catch {
+            state = .failed(error.localizedDescription)
+        }
     }
 
     private func startWatchingProject(at url: URL) {
