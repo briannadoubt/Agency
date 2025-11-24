@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import Agency
 
+@MainActor
 struct ConventionsValidatorTests {
     private let fileManager = FileManager.default
 

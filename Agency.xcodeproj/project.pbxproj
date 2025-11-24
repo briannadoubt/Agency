@@ -29,6 +29,7 @@
 		03964F7F2ED18016000DEA13 /* AgencyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgencyUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		03964FCE2ED1BC16000DEA13 /* PROJECT_WORKFLOW.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = PROJECT_WORKFLOW.md; sourceTree = "<group>"; };
 		03964FF32ED3C029000DEA13 /* AGENTS.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = AGENTS.md; sourceTree = "<group>"; };
+		0396500F2ED3DE07000DEA13 /* Agency.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = file; path = Agency.xctestplan; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -82,6 +83,7 @@
 		03964F5F2ED18013000DEA13 = {
 			isa = PBXGroup;
 			children = (
+				0396500F2ED3DE07000DEA13 /* Agency.xctestplan */,
 				03964FF32ED3C029000DEA13 /* AGENTS.md */,
 				03964FCE2ED1BC16000DEA13 /* PROJECT_WORKFLOW.md */,
 				03964FCD2ED1BA31000DEA13 /* project */,
@@ -434,7 +436,7 @@
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
 				XROS_DEPLOYMENT_TARGET = 26.1;
 			};
@@ -479,7 +481,7 @@
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
 				XROS_DEPLOYMENT_TARGET = 26.1;
 			};
