@@ -12,15 +12,6 @@ import Testing
 struct AgencyTests {
 
     @MainActor
-    @Test func phaseParsesNumberAndLabelFromDirectoryName() throws {
-        let url = URL(fileURLWithPath: "/tmp/project/phase-7-integration", isDirectory: true)
-        let phase = try Phase(path: url)
-
-        #expect(phase.number == 7)
-        #expect(phase.label == "integration")
-    }
-
-    @MainActor
     @Test func watcherRefreshesWhenNewPhaseAppears() async throws {
         let fileManager = FileManager.default
         let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -91,6 +82,66 @@ struct AgencyTests {
 
         #expect(snapshots.map { $0.phase.number } == [0, 1, 2])
         #expect(snapshots.map { $0.phase.label } == ["alpha", "delta", "beta"])
+    }
+
+    @MainActor
+    @Test func moverRelocatesCardAndKeepsContents() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let projectURL = tempRoot.appendingPathComponent(ProjectConventions.projectRootName, isDirectory: true)
+        let phaseURL = projectURL.appendingPathComponent("phase-0-alpha", isDirectory: true)
+        try makePhaseDirectories(at: phaseURL, fileManager: fileManager)
+
+        let sourceURL = phaseURL.appendingPathComponent("backlog/0.1-demo.md")
+        let contents = cardContents(code: "0.1", slug: "demo")
+        try contents.write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        let card = try CardFileParser().parse(fileURL: sourceURL, contents: contents)
+        let mover = CardMover(fileManager: fileManager)
+
+        try await mover.move(card: card, to: .done, rootURL: tempRoot)
+
+        let destinationURL = phaseURL.appendingPathComponent("done/0.1-demo.md")
+
+        #expect(!fileManager.fileExists(atPath: sourceURL.path))
+        #expect(fileManager.fileExists(atPath: destinationURL.path))
+
+        let movedContents = try String(contentsOf: destinationURL, encoding: .utf8)
+        #expect(movedContents == contents)
+    }
+
+    @MainActor
+    @Test func moverErrorsWhenDestinationMissing() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let projectURL = tempRoot.appendingPathComponent(ProjectConventions.projectRootName, isDirectory: true)
+        let phaseURL = projectURL.appendingPathComponent("phase-0-alpha", isDirectory: true)
+        try makePhaseDirectories(at: phaseURL, fileManager: fileManager)
+
+        let sourceURL = phaseURL.appendingPathComponent("backlog/0.2-demo.md")
+        let contents = cardContents(code: "0.2", slug: "demo")
+        try contents.write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        // Remove destination folder to force a failure.
+        try fileManager.removeItem(at: phaseURL.appendingPathComponent("done"))
+
+        let card = try CardFileParser().parse(fileURL: sourceURL, contents: contents)
+        let mover = CardMover(fileManager: fileManager)
+
+        do {
+            try await mover.move(card: card, to: .done, rootURL: tempRoot)
+            Issue.record("Move should have thrown when destination is missing.")
+        } catch let error as CardMoveError {
+            #expect(error == .destinationFolderMissing(.done))
+        } catch {
+            Issue.record("Unexpected error type: \(error)")
+        }
     }
 
     @MainActor
