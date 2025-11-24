@@ -56,14 +56,14 @@ final class ProjectLoader {
     }
 
     func loadProject(at url: URL) {
-        let access = SecurityScopedAccess(url: url)
+        let access = SecurityScopedAccess(url: url.standardizedFileURL)
         beginLoading(access: access, persistBookmark: true)
     }
 
     private func beginLoading(access: SecurityScopedAccess, persistBookmark: Bool) {
         scopedAccess?.stopAccessing()
         let resolvedURL = access.url.standardizedFileURL
-        scopedAccess = SecurityScopedAccess(url: resolvedURL)
+        scopedAccess = access
         state = .loading(resolvedURL)
 
         guard projectRootExists(at: resolvedURL) else {
