@@ -77,6 +77,27 @@ struct CardMarkdownWriterTests {
         #expect(snapshot.card.history.contains("2025-11-24 - Added detail modal tests"))
     }
 
+    @Test
+    func parseFailureDoesNotMutateDisk() throws {
+        let (fileURL, contents) = try makeTempCardFile()
+        let parser = CardFileParser()
+        let card = try parser.parse(fileURL: fileURL, contents: contents)
+        let writer = CardMarkdownWriter()
+        let snapshot = try writer.loadSnapshot(for: card)
+
+        do {
+            _ = try writer.saveRaw("---\ninvalid", snapshot: snapshot)
+            #expect(Bool(false), "Save should have thrown parseFailed")
+        } catch let error as CardSaveError {
+            #expect({ if case .parseFailed = error { return true } else { return false } }())
+        } catch {
+            #expect(Bool(false), "Unexpected error type: \(error)")
+        }
+
+        let disk = try String(contentsOf: fileURL, encoding: .utf8)
+        #expect(disk == contents)
+    }
+
     // MARK: Helpers
 
     private func makeTempCardFile() throws -> (URL, String) {

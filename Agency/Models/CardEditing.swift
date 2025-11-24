@@ -158,10 +158,13 @@ struct CardMarkdownWriter {
         }
 
         do {
+            // Validate the generated contents before touching disk to avoid corrupting the source file.
+            let parsed = try parser.parse(fileURL: snapshot.card.filePath, contents: contents)
+
             try contents.write(to: snapshot.card.filePath, atomically: true, encoding: .utf8)
             let attributes = try fileManager.attributesOfItem(atPath: snapshot.card.filePath.path)
             let modified = attributes[.modificationDate] as? Date ?? Date()
-            let parsed = try parser.parse(fileURL: snapshot.card.filePath, contents: contents)
+
             return CardDocumentSnapshot(card: parsed, contents: contents, modifiedAt: modified)
         } catch let error as CardParsingError {
             throw CardSaveError.parseFailed(error.localizedDescription)
