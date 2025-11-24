@@ -97,6 +97,11 @@ struct CardSection: Equatable {
     let content: String
 }
 
+struct AcceptanceCriterion: Equatable {
+    let title: String
+    let isComplete: Bool
+}
+
 struct Card: Equatable {
     let code: String
     let slug: String
@@ -104,6 +109,11 @@ struct Card: Equatable {
     let filePath: URL
     let frontmatter: CardFrontmatter
     let sections: [CardSection]
+    let title: String?
+    let summary: String?
+    let acceptanceCriteria: [AcceptanceCriterion]
+    let notes: String?
+    let history: [String]
 
     func section(named title: String) -> CardSection? {
         sections.first { $0.title.caseInsensitiveCompare(title) == .orderedSame }
@@ -116,7 +126,13 @@ struct CardFileParser {
         let status = try deriveStatus(from: fileURL)
         let identifiers = try deriveIdentifiers(from: fileURL)
         let (frontmatterEntries, body) = try splitFrontmatter(from: contents, fileURL: fileURL)
+        let title = parseTitle(from: body)
         let sections = parseSections(from: body)
+        let summary = sections.first { $0.title.caseInsensitiveCompare("Summary") == .orderedSame }?.content
+        let acceptanceSection = sections.first { $0.title.caseInsensitiveCompare("Acceptance Criteria") == .orderedSame }
+        let acceptanceCriteria = parseAcceptanceCriteria(from: acceptanceSection?.content ?? "")
+        let notes = sections.first { $0.title.caseInsensitiveCompare("Notes") == .orderedSame }?.content
+        let history = parseHistory(from: sections.first { $0.title.caseInsensitiveCompare("History") == .orderedSame }?.content ?? "")
 
         let frontmatter = CardFrontmatter(entries: frontmatterEntries)
 
@@ -125,7 +141,12 @@ struct CardFileParser {
                     status: status,
                     filePath: fileURL,
                     frontmatter: frontmatter,
-                    sections: sections)
+                    sections: sections,
+                    title: title,
+                    summary: summary,
+                    acceptanceCriteria: acceptanceCriteria,
+                    notes: notes,
+                    history: history)
     }
 
     private func deriveStatus(from fileURL: URL) throws -> CardStatus {
@@ -166,6 +187,20 @@ struct CardFileParser {
         return (entries, body)
     }
 
+    private func parseTitle(from body: String) -> String? {
+        for line in body.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("# ") {
+                return String(trimmed.dropFirst(2))
+            }
+            if !trimmed.isEmpty && !trimmed.hasPrefix("#") {
+                // Stop once content begins without a leading title.
+                return nil
+            }
+        }
+        return nil
+    }
+
     private func parseSections(from body: String) -> [CardSection] {
         var sections: [CardSection] = []
         var currentTitle: String?
@@ -190,6 +225,39 @@ struct CardFileParser {
 
         appendSectionIfNeeded()
         return sections
+    }
+
+    private func parseAcceptanceCriteria(from content: String) -> [AcceptanceCriterion] {
+        var criteria: [AcceptanceCriterion] = []
+
+        for line in content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("- [") else { continue }
+
+            let isComplete = trimmed.contains("- [x]") || trimmed.contains("- [X]")
+            let titleStart = trimmed.dropFirst(4) // "- ["
+                .drop(while: { $0 != "]" })
+                .dropFirst() // drop closing ]
+                .trimmingCharacters(in: .whitespaces)
+            let title = String(titleStart)
+            if !title.isEmpty {
+                criteria.append(AcceptanceCriterion(title: title, isComplete: isComplete))
+            }
+        }
+
+        return criteria
+    }
+
+    private func parseHistory(from content: String) -> [String] {
+        let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        return lines
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .compactMap { line in
+                if line.hasPrefix("- ") {
+                    return String(line.dropFirst(2))
+                }
+                return line.isEmpty ? nil : line
+            }
     }
 
     private func isSectionTitle(_ line: String) -> Bool {
