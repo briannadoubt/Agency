@@ -106,23 +106,24 @@ private struct DetailView: View {
     var body: some View {
         if let snapshot {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.large) {
                     ProjectSummary(snapshot: snapshot)
 
                     if let phase = selectedPhase(from: snapshot) {
                         PhaseDetail(phase: phase) { card, status in
                             await loader.moveCard(card, to: status)
                         }
-                            .id(phase.phase.number)
+                        .id(phase.phase.number)
                     } else {
                         Text("Select a phase to see its cards.")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DesignTokens.Colors.textSecondary)
+                            .font(DesignTokens.Typography.body)
                     }
                 }
-                .padding()
+                .padding(DesignTokens.Spacing.large)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(Color(.textBackgroundColor))
+            .background(DesignTokens.Colors.canvas)
         } else {
             VStack(spacing: 12) {
                 Image(systemName: "folder")
@@ -170,10 +171,11 @@ private struct ProjectSummary: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Project root")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
             Text(snapshot.rootURL.path)
-                .font(.headline)
+                .font(DesignTokens.Typography.headline)
+                .foregroundStyle(DesignTokens.Colors.textPrimary)
 
             if !snapshot.validationIssues.isEmpty {
                 ValidationIssuesView(issues: snapshot.validationIssues)
@@ -205,16 +207,17 @@ private struct ValidationIssuesView: View {
             }
         }
         .padding()
-        .background(Color(.windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .background(DesignTokens.Colors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium))
+        .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium).stroke(DesignTokens.Colors.stroke, lineWidth: 1))
     }
 
     private func color(for severity: ValidationIssue.Severity) -> Color {
         switch severity {
         case .error:
-            return .red
+            return DesignTokens.Colors.riskHigh.foreground
         case .warning:
-            return .yellow
+            return DesignTokens.Colors.riskMedium.foreground
         }
     }
 }
@@ -241,10 +244,10 @@ private struct PhaseDetail: View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Phase \(phase.phase.number) · \(phase.phase.label)")
-                    .font(.title2.bold())
+                    .font(DesignTokens.Typography.titleLarge)
                 Text("\(phase.cards.count) card(s)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
             }
 
             KanbanBoard(phase: phase,
@@ -266,6 +269,7 @@ private struct PhaseDetail: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(moveError?.localizedDescription ?? "Unknown error.")
+                .foregroundStyle(DesignTokens.Colors.textPrimary)
         }
         .onChange(of: selectedCardPath) { _, newPath in
             guard let newPath, let card = cardsByPath[newPath] else {
@@ -327,7 +331,7 @@ private struct KanbanBoard: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: DesignTokens.Spacing.medium) {
                 ForEach(CardStatus.allCases, id: \.self) { status in
                     KanbanColumn(status: status,
                                  cards: cards(for: status),
@@ -363,7 +367,7 @@ private struct KanbanColumn: View {
             ColumnHeader(status: status, count: cards.count)
 
             ScrollView {
-                LazyVStack(spacing: 10) {
+                LazyVStack(spacing: DesignTokens.Spacing.small) {
                     if cards.isEmpty {
                         EmptyColumnState(status: status)
                             .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
@@ -394,7 +398,7 @@ private struct KanbanColumn: View {
                 .animation(.snappy(duration: 0.2), value: cards)
             }
         }
-        .padding()
+        .padding(DesignTokens.Spacing.medium)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(columnBackground(isTargeted: isTargeted))
         .overlay(RoundedRectangle(cornerRadius: 12)
@@ -412,11 +416,11 @@ private struct KanbanColumn: View {
 
     private func columnBackground(isTargeted: Bool) -> some View {
         RoundedRectangle(cornerRadius: 12)
-            .fill(isTargeted ? Color.accentColor.opacity(0.12) : Color(.windowBackgroundColor))
+            .fill(isTargeted ? DesignTokens.Colors.accent.opacity(0.16) : DesignTokens.Colors.surface)
     }
 
     private func columnBorder(isTargeted: Bool) -> Color {
-        isTargeted ? .accentColor : Color(.separatorColor)
+        isTargeted ? DesignTokens.Colors.accent : DesignTokens.Colors.stroke
     }
 }
 
@@ -427,14 +431,15 @@ private struct ColumnHeader: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             Text(title(for: status))
-                .font(.headline)
+                .font(DesignTokens.Typography.headline)
             Spacer()
             Text("\(count)")
-                .font(.caption.bold())
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(Color(.controlAccentColor).opacity(0.12)))
+                .font(DesignTokens.Typography.caption.weight(.bold))
+                .padding(.horizontal, DesignTokens.Spacing.xSmall)
+                .padding(.vertical, DesignTokens.Spacing.grid)
+                .background(Capsule().fill(DesignTokens.Colors.accent.opacity(0.14)))
         }
+        .foregroundStyle(DesignTokens.Colors.textPrimary)
     }
 
     private func title(for status: CardStatus) -> String {
@@ -455,15 +460,15 @@ private struct EmptyColumnState: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("No \(title) cards")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(DesignTokens.Typography.body)
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
             Text("Drop a card here to update its status.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Colors.textMuted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).stroke(Color(.separatorColor), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+        .background(RoundedRectangle(cornerRadius: 10).stroke(DesignTokens.Colors.stroke, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
     }
 
     private var title: String {
@@ -494,19 +499,20 @@ private struct CardTile: View {
                     .progressViewStyle(.linear)
             }
         }
-        .padding(12)
+        .padding(DesignTokens.Spacing.small)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 10)
-            .fill(Color(.controlBackgroundColor)))
+            .fill(DesignTokens.Colors.card))
         .overlay(RoundedRectangle(cornerRadius: 10)
             .stroke(borderColor, lineWidth: 1))
         .opacity(isGhosted ? 0.7 : 1)
+        .tokenShadow(DesignTokens.Shadows.card)
     }
 
     private var borderColor: Color {
-        if isGhosted { return .accentColor }
-        if isSelected { return Color.accentColor.opacity(0.6) }
-        return Color.clear
+        if isGhosted { return DesignTokens.Colors.accent }
+        if isSelected { return DesignTokens.Colors.accent.opacity(0.7) }
+        return DesignTokens.Colors.strokeMuted
     }
 }
 
@@ -517,15 +523,17 @@ private struct CardRow: View {
         VStack(alignment: .leading, spacing: 4) {
             if let title = card.title {
                 Text(title)
-                    .font(.headline)
+                    .font(DesignTokens.Typography.headline)
+                    .foregroundStyle(DesignTokens.Colors.textPrimary)
             }
             Text(card.code)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
 
             if let summary = card.summary, !summary.isEmpty {
                 Text(summary.trimmingCharacters(in: .whitespacesAndNewlines))
-                    .font(.callout)
+                    .font(DesignTokens.Typography.body)
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
