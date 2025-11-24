@@ -145,6 +145,48 @@ struct AgencyTests {
     }
 
     @MainActor
+    @Test func inspectorDraftMirrorsParsedCard() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let projectURL = tempRoot.appendingPathComponent(ProjectConventions.projectRootName, isDirectory: true)
+        let phaseURL = projectURL.appendingPathComponent("phase-1-core", isDirectory: true)
+        try makePhaseDirectories(at: phaseURL, fileManager: fileManager)
+
+        let cardURL = phaseURL.appendingPathComponent("backlog/1.4-card-inspector.md")
+        let markdown = """
+---
+owner: test
+---
+
+# 1.4 Card Inspector
+
+Summary:
+Build a focused inspector pane.
+
+Acceptance Criteria:
+- [ ] show card details
+- [x] launch editor
+
+Notes:
+- Read-only for now.
+"""
+
+        try markdown.write(to: cardURL, atomically: true, encoding: .utf8)
+
+        let card = try CardFileParser().parse(fileURL: cardURL, contents: markdown)
+        let draft = CardInspectorDraft(card: card)
+
+        #expect(draft.title == "1.4 Card Inspector")
+        #expect(draft.summary == "Build a focused inspector pane.")
+        #expect(draft.acceptanceCriteria.map(\.title) == ["show card details", "launch editor"])
+        #expect(draft.acceptanceCriteria.map(\.isComplete) == [false, true])
+        #expect(draft.notes.contains("Read-only for now."))
+    }
+
+    @MainActor
     private func makePhaseDirectories(at url: URL, fileManager: FileManager) throws {
         for status in CardStatus.allCases {
             let statusURL = url.appendingPathComponent(status.folderName, isDirectory: true)
