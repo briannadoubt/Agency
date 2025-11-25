@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 enum CardDetailMode: String, CaseIterable, Identifiable {
     case view
@@ -56,6 +57,11 @@ struct CardDetailModal: View {
     @State private var skipRawRefreshOnce = false
 
     private let pipeline = CardEditingPipeline.shared
+    private let branchHelper = BranchHelper()
+
+    @State private var branchPrefix = "implement"
+    @State private var branchStatusMessage: String?
+    @State private var isApplyingBranch = false
 
     private var hasUnsavedChanges: Bool {
         guard let snapshot else { return false }
@@ -75,6 +81,14 @@ struct CardDetailModal: View {
                                                                appendHistory: appendHistory)
             return rendered != snapshot.contents
         }
+    }
+
+    private var recommendedBranch: String {
+        branchHelper.recommendedBranch(for: snapshot?.card ?? card, prefix: branchPrefix)
+    }
+
+    private var checkoutCommand: String {
+        branchHelper.checkoutCommand(for: recommendedBranch)
     }
 
     var body: some View {
@@ -183,7 +197,16 @@ struct CardDetailModal: View {
     private var content: some View {
         switch mode {
         case .view:
-            CardViewMode(formDraft: $formDraft, phase: phase)
+            CardViewMode(formDraft: $formDraft,
+                         phase: phase,
+                         branchPrefix: $branchPrefix,
+                         recommendedBranch: recommendedBranch,
+                         checkoutCommand: checkoutCommand,
+                         branchStatusMessage: branchStatusMessage,
+                         isApplyingBranch: isApplyingBranch,
+                         onCopyBranch: { copyBranchToPasteboard(recommendedBranch) },
+                         onCopyCommand: { copyCheckoutCommand() },
+                         onApplyBranch: { Task { await applyRecommendedBranch() } })
         case .form:
             CardFormMode(formDraft: $formDraft)
         case .raw:
@@ -251,6 +274,9 @@ struct CardDetailModal: View {
                 snapshot = loaded
                 pendingRawSnapshot = nil
                 formDraft = CardDetailFormDraft.from(card: loaded.card)
+                let preferredPrefix = formDraft.agentFlow.isFrontmatterEmpty ? "implement" : formDraft.agentFlow
+                branchPrefix = BranchHelper.normalizeSegment(preferredPrefix, fallback: "implement")
+                branchStatusMessage = nil
                 rawDraft = loaded.contents
                 isLoading = false
             }
@@ -306,6 +332,9 @@ struct CardDetailModal: View {
         pendingRawSnapshot = nil
         appendHistory = false
         errorMessage = nil
+        let preferredPrefix = formDraft.agentFlow.isFrontmatterEmpty ? "implement" : formDraft.agentFlow
+        branchPrefix = BranchHelper.normalizeSegment(preferredPrefix, fallback: "implement")
+        branchStatusMessage = nil
     }
 
     private func appendHistoryIfNeeded(to raw: String) -> String {
@@ -355,6 +384,60 @@ struct CardDetailModal: View {
     }
 
     @MainActor
+    private func copyBranchToPasteboard(_ value: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(value, forType: .string)
+        branchStatusMessage = "Copied \(value) to the clipboard."
+    }
+
+    @MainActor
+    private func copyCheckoutCommand() {
+        copyBranchToPasteboard(checkoutCommand)
+    }
+
+    @MainActor
+    private func applyRecommendedBranch() async {
+        guard let snapshot else {
+            branchStatusMessage = "Load a card before applying a branch."
+            return
+        }
+
+        isApplyingBranch = true
+        defer { isApplyingBranch = false }
+
+        let baseline = pendingRawSnapshot ?? snapshot
+        var draft = formDraft
+        let branch = recommendedBranch
+        let existing = baseline.card.frontmatter.branch?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shouldAppendHistory = existing != branch
+
+        draft.branch = branch
+        if shouldAppendHistory {
+            draft.newHistoryEntry = BranchHelper.historyEntry(branch: branch, date: Date())
+        }
+
+        let rendered = CardMarkdownWriter().renderMarkdown(from: draft,
+                                                           basedOn: baseline.card,
+                                                           existingContents: baseline.contents,
+                                                           appendHistory: shouldAppendHistory)
+
+        do {
+            let updated = try pipeline.saveRaw(rendered, snapshot: snapshot)
+            self.snapshot = updated
+            pendingRawSnapshot = nil
+            formDraft = CardDetailFormDraft.from(card: updated.card)
+            rawDraft = updated.contents
+            appendHistory = false
+            branchStatusMessage = shouldAppendHistory ? "Applied \(branch) to frontmatter." : "Branch already set to \(branch)."
+        } catch let error as CardSaveError {
+            branchStatusMessage = error.localizedDescription
+        } catch {
+            branchStatusMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
     private func save() async {
         guard let snapshot else { return }
         guard hasUnsavedChanges else {
@@ -400,12 +483,29 @@ struct CardDetailModal: View {
 private struct CardViewMode: View {
     @Binding var formDraft: CardDetailFormDraft
     let phase: Phase
+    @Binding var branchPrefix: String
+    let recommendedBranch: String
+    let checkoutCommand: String
+    let branchStatusMessage: String?
+    let isApplyingBranch: Bool
+    let onCopyBranch: () -> Void
+    let onCopyCommand: () -> Void
+    let onApplyBranch: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.large) {
+                BranchHelperPanel(formDraft: formDraft,
+                                   branchPrefix: $branchPrefix,
+                                   recommendedBranch: recommendedBranch,
+                                   checkoutCommand: checkoutCommand,
+                                   statusMessage: branchStatusMessage,
+                                   isApplying: isApplyingBranch,
+                                   onCopyBranch: onCopyBranch,
+                                   onCopyCommand: onCopyCommand,
+                                   onApplyBranch: onApplyBranch)
                 MetadataGrid(formDraft: formDraft, phase: phase)
                 SummaryBlock(summary: $formDraft.summary)
                 CriteriaList(criteria: $formDraft.criteria, accentColor: accentColor)
@@ -418,6 +518,116 @@ private struct CardViewMode: View {
 
     private var accentColor: Color {
         DesignTokens.Colors.preferredAccent(for: colorScheme)
+    }
+}
+
+private struct BranchHelperPanel: View {
+    let formDraft: CardDetailFormDraft
+    @Binding var branchPrefix: String
+    let recommendedBranch: String
+    let checkoutCommand: String
+    let statusMessage: String?
+    let isApplying: Bool
+    let onCopyBranch: () -> Void
+    let onCopyCommand: () -> Void
+    let onApplyBranch: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+            HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.small) {
+                Label("Branch Helper", systemImage: "arrow.branch")
+                    .font(DesignTokens.Typography.headline)
+                Spacer()
+                Text(currentBranchLabel)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+            }
+
+            Text("Generate a normalized branch for this card, copy it, and write it to frontmatter.")
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+
+            HStack(alignment: .center, spacing: DesignTokens.Spacing.small) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Prefix")
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Colors.textSecondary)
+                    TextField("implement", text: $branchPrefix)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 160)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Recommended")
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Colors.textSecondary)
+                    Text(recommendedBranch)
+                        .font(.system(.body, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.small)
+                            .fill(DesignTokens.Colors.surface))
+                        .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.small)
+                            .stroke(DesignTokens.Colors.stroke, lineWidth: 1))
+                }
+
+                Spacer(minLength: DesignTokens.Spacing.medium)
+
+                Button(action: onCopyBranch) {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+
+                Button(action: onApplyBranch) {
+                    if isApplying {
+                        ProgressView()
+                    } else {
+                        Label("Apply", systemImage: "tray.and.arrow.down")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isApplying)
+            }
+
+            HStack(alignment: .center, spacing: DesignTokens.Spacing.small) {
+                Text(checkoutCommand)
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer()
+
+                Button(action: onCopyCommand) {
+                    Label("Copy Command", systemImage: "terminal")
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if let statusMessage {
+                HStack(spacing: DesignTokens.Spacing.small) {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(DesignTokens.Colors.preferredAccent(for: colorScheme))
+                    Text(statusMessage)
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Colors.textSecondary)
+                }
+            }
+        }
+        .padding()
+        .surfaceStyle(DesignTokens.Surfaces.card())
+    }
+
+    private var currentBranchLabel: String {
+        let existing = formDraft.branch.trimmingCharacters(in: .whitespacesAndNewlines)
+        if existing.isEmpty {
+            return "Frontmatter branch: —"
+        }
+        return "Frontmatter branch: \(existing)"
     }
 }
 
