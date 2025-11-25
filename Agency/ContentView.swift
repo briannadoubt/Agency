@@ -120,6 +120,11 @@ private struct DetailView: View {
                                        },
                                        onToggleCriterion: { card, index in
                                            await loader.toggleAcceptanceCriterion(card, index: index)
+                                       },
+                                       onCreateCard: { title, includeHistory in
+                                           await loader.createCard(in: phase,
+                                                                   title: title,
+                                                                   includeHistoryEntry: includeHistory)
                                        })
                                 .id(phase.phase.number)
                         } else {
@@ -262,13 +267,19 @@ private struct PhaseDetail: View {
     let phase: PhaseSnapshot
     let onMove: (Card, CardStatus) async -> Result<Void, CardMoveError>
     let onToggleCriterion: (Card, Int) async -> Result<Void, Error>
+    let onCreateCard: (String, Bool) async -> Result<Card, CardCreationError>
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var draggingCardPath: String?
     @State private var moveError: CardMoveError?
     @State private var editError: String?
+    @State private var creationError: String?
     @State private var selectedCardPath: String?
     @State private var isShowingDetailModal = false
+    @State private var isPresentingCreateSheet = false
+    @State private var newCardTitle = ""
+    @State private var includeHistoryEntry = true
+    @State private var isCreatingCard = false
 
     private var cardsByPath: [String: Card] {
         Dictionary(uniqueKeysWithValues: phase.cards.map { ($0.filePath.standardizedFileURL.path, $0) })
@@ -281,12 +292,25 @@ private struct PhaseDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Phase \(phase.phase.number) · \(phase.phase.label)")
-                    .font(DesignTokens.Typography.titleLarge)
-                Text("\(phase.cards.count) card(s)")
-                    .font(DesignTokens.Typography.caption)
-                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+            HStack(alignment: .center, spacing: DesignTokens.Spacing.medium) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Phase \(phase.phase.number) · \(phase.phase.label)")
+                        .font(DesignTokens.Typography.titleLarge)
+                    Text("\(phase.cards.count) card(s)")
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Colors.textSecondary)
+                }
+
+                Spacer()
+
+                Button {
+                    newCardTitle = ""
+                    includeHistoryEntry = true
+                    isPresentingCreateSheet = true
+                } label: {
+                    Label("New Card", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
             }
 
             KanbanBoard(phase: phase,
@@ -319,12 +343,29 @@ private struct PhaseDetail: View {
             Text(editError ?? "Unknown error.")
                 .foregroundStyle(DesignTokens.Colors.textPrimary)
         }
+        .alert("Create failed", isPresented: Binding(get: { creationError != nil },
+                                                   set: { newValue in
+                                                       if !newValue { creationError = nil }
+                                                   })) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(creationError ?? "Unknown error.")
+                .foregroundStyle(DesignTokens.Colors.textPrimary)
+        }
         .sheet(isPresented: $isShowingDetailModal) {
             if let selectedCard {
                 CardDetailModal(card: selectedCard,
                                 phase: phase.phase)
                     .presentationDetents([.large])
             }
+        }
+        .sheet(isPresented: $isPresentingCreateSheet) {
+            CreateCardSheet(title: $newCardTitle,
+                            includeHistoryEntry: $includeHistoryEntry,
+                            isCreating: isCreatingCard,
+                            onCancel: { isPresentingCreateSheet = false },
+                            onSubmit: createCard)
+                .frame(minWidth: 420)
         }
         .onChange(of: selectedCardPath) { _, newPath in
             guard let newPath, cardsByPath[newPath] != nil else {
@@ -385,6 +426,33 @@ private struct PhaseDetail: View {
                 }
             }
         }
+    }
+
+    private func createCard() {
+        let trimmedTitle = newCardTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else {
+            creationError = CardCreationError.emptyTitle.localizedDescription
+            return
+        }
+
+        isCreatingCard = true
+        Task {
+            let result = await performCreateCard(title: trimmedTitle, includeHistoryEntry: includeHistoryEntry)
+            await MainActor.run {
+                isCreatingCard = false
+                switch result {
+                case .success:
+                    isPresentingCreateSheet = false
+                    newCardTitle = ""
+                case .failure(let error):
+                    creationError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func performCreateCard(title: String, includeHistoryEntry: Bool) async -> Result<Card, CardCreationError> {
+        await onCreateCard(title, includeHistoryEntry)
     }
 }
 
@@ -769,6 +837,69 @@ private struct MetadataPill: View {
         .padding(.vertical, DesignTokens.Spacing.grid)
         .background(Capsule().fill(emphasize ? DesignTokens.Colors.preferredAccent(for: colorScheme).opacity(0.18) : DesignTokens.Colors.stroke.opacity(0.35)))
         .foregroundStyle(emphasize ? DesignTokens.Colors.preferredAccent(for: colorScheme) : DesignTokens.Colors.textSecondary)
+    }
+}
+
+private struct CreateCardSheet: View {
+    @Binding var title: String
+    @Binding var includeHistoryEntry: Bool
+    let isCreating: Bool
+    let onCancel: () -> Void
+    let onSubmit: () -> Void
+
+    @FocusState private var isTitleFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.large) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+                Text("Create Card")
+                    .font(DesignTokens.Typography.titleLarge)
+                Text("Enter a title. Agency will pick the next task number in this phase, generate a slug, and place the card in backlog.")
+                    .font(DesignTokens.Typography.body)
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+            }
+
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+                Text("Title")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                TextField("e.g., Add keyboard navigation", text: $title)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($isTitleFocused)
+            }
+
+            Toggle("Add creation entry to History", isOn: $includeHistoryEntry)
+                .toggleStyle(.switch)
+
+            HStack {
+                Button("Cancel") {
+                    onCancel()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Spacer()
+
+                Button {
+                    onSubmit()
+                } label: {
+                    if isCreating {
+                        ProgressView()
+                    } else {
+                        Label("Create Card", systemImage: "plus")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCreating)
+            }
+        }
+        .padding(DesignTokens.Spacing.large)
+        .onAppear {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(80))
+                isTitleFocused = true
+            }
+        }
     }
 }
 
