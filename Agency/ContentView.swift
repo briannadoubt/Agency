@@ -258,6 +258,7 @@ private struct PhaseDetail: View {
     let phase: PhaseSnapshot
     let onMove: (Card, CardStatus) async -> Result<Void, CardMoveError>
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var draggingCardPath: String?
     @State private var moveError: CardMoveError?
     @State private var selectedCardPath: String?
@@ -286,7 +287,8 @@ private struct PhaseDetail: View {
                         draggingCardPath: $draggingCardPath,
                         selectedCardPath: $selectedCardPath,
                         onMove: handleMove,
-                        onSelect: handleSelect)
+                        onSelect: handleSelect,
+                        reduceMotion: reduceMotion)
                 .frame(minHeight: DesignTokens.Layout.boardMinimumHeight)
 
         }
@@ -365,8 +367,11 @@ private struct KanbanBoard: View {
     @Binding var selectedCardPath: String?
     let onMove: (String, CardStatus) -> Void
     let onSelect: (Card) -> Void
+    let reduceMotion: Bool
 
     var body: some View {
+        let boardAnimation: Animation? = reduceMotion ? nil : DesignTokens.Motion.board
+
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: DesignTokens.Layout.boardColumnSpacing) {
                 ForEach(CardStatus.allCases, id: \.self) { status in
@@ -375,14 +380,15 @@ private struct KanbanBoard: View {
                                  draggingCardPath: $draggingCardPath,
                                  selectedCardPath: $selectedCardPath,
                                  onMove: onMove,
-                                 onSelect: onSelect)
+                                 onSelect: onSelect,
+                                 reduceMotion: reduceMotion)
                         .frame(width: DesignTokens.Layout.boardColumnWidth)
                 }
             }
             .padding(.horizontal, DesignTokens.Layout.boardHorizontalGutter)
             .padding(.vertical, DesignTokens.Layout.boardVerticalGutter)
             .frame(minWidth: DesignTokens.Layout.boardContentWidth, alignment: .leading)
-            .animation(.snappy(duration: 0.22), value: phase.cards)
+            .animation(boardAnimation, value: phase.cards)
         }
         .frame(minHeight: DesignTokens.Layout.boardMinimumHeight)
     }
@@ -399,13 +405,20 @@ private struct KanbanColumn: View {
     @Binding var selectedCardPath: String?
     let onMove: (String, CardStatus) -> Void
     let onSelect: (Card) -> Void
+    let reduceMotion: Bool
 
     @State private var isTargeted: Bool = false
 
     private let columnCornerRadius = DesignTokens.Radius.large
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        content
+    }
+
+    private var content: some View {
+        let boardAnimation: Animation? = reduceMotion ? nil : DesignTokens.Motion.board
+
+        return VStack(alignment: .leading, spacing: 10) {
             ColumnHeader(status: status, count: cards.count)
 
             ScrollView {
@@ -421,7 +434,8 @@ private struct KanbanColumn: View {
                             CardTile(card: card,
                                      presentation: presentation,
                                      isGhosted: draggingCardPath == cardPath,
-                                     isSelected: selectedCardPath == cardPath)
+                                     isSelected: selectedCardPath == cardPath,
+                                     reduceMotion: reduceMotion)
                                 .onTapGesture {
                                     selectedCardPath = cardPath
                                     onSelect(card)
@@ -430,7 +444,8 @@ private struct KanbanColumn: View {
                                     CardTile(card: card,
                                              presentation: presentation,
                                              isGhosted: true,
-                                             isSelected: false)
+                                             isSelected: false,
+                                             reduceMotion: reduceMotion)
                                 }
                                 .dropDestination(for: CardDragItem.self) { items, _ in
                                     guard let item = items.first else { return false }
@@ -443,7 +458,7 @@ private struct KanbanColumn: View {
                         }
                     }
                 }
-                .animation(.snappy(duration: 0.2), value: cards)
+                .animation(boardAnimation, value: cards)
             }
         }
         .padding(DesignTokens.Spacing.medium)
@@ -536,8 +551,8 @@ private struct CardTile: View {
     let presentation: CardPresentation
     let isGhosted: Bool
     let isSelected: Bool
+    let reduceMotion: Bool
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
     private let cornerRadius = DesignTokens.Radius.medium
@@ -581,7 +596,7 @@ private struct CardTile: View {
             if reduceMotion {
                 isHovering = hovering
             } else {
-                withAnimation(.easeInOut(duration: 0.16)) {
+                withAnimation(DesignTokens.Motion.hover) {
                     isHovering = hovering
                 }
             }
