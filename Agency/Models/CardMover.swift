@@ -111,6 +111,9 @@ final class CardMover {
     private func appendHistoryEntry(for card: Card,
                                     from sourceStatus: CardStatus,
                                     to destinationStatus: CardStatus) throws {
+        // Skip history logging when the destination file is not writable (e.g., read-only attrs).
+        guard fileManager.isWritableFile(atPath: card.filePath.path) else { return }
+
         let entry = Self.historyEntry(from: sourceStatus,
                                       to: destinationStatus,
                                       dateProvider: dateProvider)
