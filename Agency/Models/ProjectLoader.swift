@@ -23,6 +23,7 @@ final class ProjectLoader {
     private let fileManager: FileManager
     private let scanner: ProjectScanner
     private let cardMover: CardMover
+    private let editor = CardEditingPipeline.shared
 
     private var watchTask: Task<Void, Never>?
     private var scopedAccess: SecurityScopedAccess?
@@ -79,6 +80,18 @@ final class ProjectLoader {
             return .failure(moveError)
         } catch {
             return .failure(.moveFailed(error.localizedDescription))
+        }
+    }
+
+    func toggleAcceptanceCriterion(_ card: Card, index: Int) async -> Result<Void, Error> {
+        guard let snapshot = loadedSnapshot else { return .failure(CardSaveError.parseFailed("Snapshot unavailable")) }
+
+        do {
+            _ = try editor.toggleAcceptanceCriterion(for: card, index: index)
+            await refreshSnapshot(afterFilesystemChangeAt: snapshot.rootURL)
+            return .success(())
+        } catch {
+            return .failure(error)
         }
     }
 
