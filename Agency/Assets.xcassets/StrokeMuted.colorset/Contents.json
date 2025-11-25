@@ -8,7 +8,7 @@
     {
       "idiom" : "universal",
       "appearances" : [ { "appearance" : "luminosity", "value" : "dark" } ],
-      "color" : { "color-space" : "srgb", "components" : { "red" : "1.0000", "green" : "1.0000", "blue" : "1.0000", "alpha" : "0.0600" } }
+      "color" : { "color-space" : "srgb", "components" : { "red" : "1.0000", "green" : "1.0000", "blue" : "1.0000", "alpha" : "0.3400" } }
     }
   ],
   "info" : { "author" : "xcode", "version" : 1 }
