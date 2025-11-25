@@ -102,15 +102,72 @@ struct AgencyTests {
         let card = try CardFileParser().parse(fileURL: sourceURL, contents: contents)
         let mover = CardMover(fileManager: fileManager)
 
-        try await mover.move(card: card, to: .done, rootURL: tempRoot)
+        try await mover.move(card: card, to: .inProgress, rootURL: tempRoot)
 
-        let destinationURL = phaseURL.appendingPathComponent("done/0.1-demo.md")
+        let destinationURL = phaseURL.appendingPathComponent("in-progress/0.1-demo.md")
 
         #expect(!fileManager.fileExists(atPath: sourceURL.path))
         #expect(fileManager.fileExists(atPath: destinationURL.path))
 
         let movedContents = try String(contentsOf: destinationURL, encoding: .utf8)
         #expect(movedContents == contents)
+    }
+
+    @MainActor
+    @Test func moverRejectsSkippingColumns() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let projectURL = tempRoot.appendingPathComponent(ProjectConventions.projectRootName, isDirectory: true)
+        let phaseURL = projectURL.appendingPathComponent("phase-0-alpha", isDirectory: true)
+        try makePhaseDirectories(at: phaseURL, fileManager: fileManager)
+
+        let sourceURL = phaseURL.appendingPathComponent("backlog/0.3-demo.md")
+        let contents = richCardContents(code: "0.3", slug: "demo")
+        try contents.write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        let card = try CardFileParser().parse(fileURL: sourceURL, contents: contents)
+        let mover = CardMover(fileManager: fileManager)
+
+        do {
+            try await mover.move(card: card, to: .done, rootURL: tempRoot, logHistoryEntry: false)
+            Issue.record("Move should have rejected skipping in-progress.")
+        } catch let error as CardMoveError {
+            #expect(error == .illegalTransition(from: .backlog, to: .done))
+        }
+    }
+
+    @MainActor
+    @Test func moverAppendsHistoryWhenLoggingEnabled() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let fixedDate = Calendar(identifier: .iso8601).date(from: DateComponents(year: 2025, month: 1, day: 2))!
+        let projectURL = tempRoot.appendingPathComponent(ProjectConventions.projectRootName, isDirectory: true)
+        let phaseURL = projectURL.appendingPathComponent("phase-0-alpha", isDirectory: true)
+        try makePhaseDirectories(at: phaseURL, fileManager: fileManager)
+
+        let sourceURL = phaseURL.appendingPathComponent("backlog/0.4-demo.md")
+        let contents = richCardContents(code: "0.4", slug: "demo", historyEntry: "2025-01-01 - Seeded history.")
+        try contents.write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        let card = try CardFileParser().parse(fileURL: sourceURL, contents: contents)
+        let mover = CardMover(fileManager: fileManager,
+                              dateProvider: { fixedDate })
+
+        try await mover.move(card: card, to: .inProgress, rootURL: tempRoot, logHistoryEntry: true)
+
+        let destinationURL = phaseURL.appendingPathComponent("in-progress/0.4-demo.md")
+        let movedContents = try String(contentsOf: destinationURL, encoding: .utf8)
+        let parsed = try CardFileParser().parse(fileURL: destinationURL, contents: movedContents)
+
+        #expect(parsed.status == .inProgress)
+        #expect(parsed.history.contains("2025-01-01 - Seeded history."))
+        #expect(parsed.history.contains("2025-01-02 - Moved from Backlog to In Progress."))
     }
 
     @MainActor
@@ -129,16 +186,16 @@ struct AgencyTests {
         try contents.write(to: sourceURL, atomically: true, encoding: .utf8)
 
         // Remove destination folder to force a failure.
-        try fileManager.removeItem(at: phaseURL.appendingPathComponent("done"))
+        try fileManager.removeItem(at: phaseURL.appendingPathComponent("in-progress"))
 
         let card = try CardFileParser().parse(fileURL: sourceURL, contents: contents)
         let mover = CardMover(fileManager: fileManager)
 
         do {
-            try await mover.move(card: card, to: .done, rootURL: tempRoot)
+            try await mover.move(card: card, to: .inProgress, rootURL: tempRoot)
             Issue.record("Move should have thrown when destination is missing.")
         } catch let error as CardMoveError {
-            #expect(error == .destinationFolderMissing(.done))
+            #expect(error == .destinationFolderMissing(.inProgress))
         } catch {
             Issue.record("Unexpected error type: \(error)")
         }
@@ -196,5 +253,30 @@ Notes:
 
     private func cardContents(code: String, slug: String) -> String {
         "---\nowner: test\n---\nSummary:\n- Task \(code)-\(slug)\n"
+    }
+
+    private func richCardContents(code: String, slug: String, historyEntry: String = "2025-01-01 - Created for testing.") -> String {
+        """
+---
+owner: test
+agent_status: idle
+branch: null
+parallelizable: false
+---
+
+# \(code) \(slug.capitalized)
+
+Summary:
+Basic summary for \(slug).
+
+Acceptance Criteria:
+- [ ] first
+
+Notes:
+- testing note
+
+History:
+- \(historyEntry)
+"""
     }
 }

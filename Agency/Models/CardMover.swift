@@ -4,6 +4,7 @@ enum CardMoveError: LocalizedError, Equatable {
     case snapshotUnavailable
     case cardOutsideProject
     case destinationFolderMissing(CardStatus)
+    case illegalTransition(from: CardStatus, to: CardStatus)
     case moveFailed(String)
 
     var errorDescription: String? {
@@ -14,6 +15,8 @@ enum CardMoveError: LocalizedError, Equatable {
             return "Card is outside the selected project."
         case .destinationFolderMissing(let status):
             return "Missing \(status.folderName) folder."
+        case .illegalTransition(let from, let to):
+            return "Cannot move from \(from.displayName) to \(to.displayName) without passing through each column."
         case .moveFailed(let message):
             return "Unable to move card: \(message)"
         }
@@ -21,14 +24,21 @@ enum CardMoveError: LocalizedError, Equatable {
 }
 
 /// Moves cards between status folders, ensuring the operation either completes or restores the source.
-actor CardMover {
+@MainActor
+final class CardMover {
     private let fileManager: FileManager
+    private let dateProvider: () -> Date
 
-    init(fileManager: FileManager = .default) {
+    init(fileManager: FileManager = .default,
+         dateProvider: @escaping () -> Date = Date.init) {
         self.fileManager = fileManager
+        self.dateProvider = dateProvider
     }
 
-    func move(card: Card, to newStatus: CardStatus, rootURL: URL) async throws {
+    func move(card: Card,
+              to newStatus: CardStatus,
+              rootURL: URL,
+              logHistoryEntry: Bool = false) async throws {
         let standardizedRoot = rootURL.standardizedFileURL
         let sourceURL = card.filePath.standardizedFileURL
 
@@ -37,6 +47,10 @@ actor CardMover {
         }
 
         guard card.status != newStatus else { return }
+
+        guard card.status.canTransition(to: newStatus) else {
+            throw CardMoveError.illegalTransition(from: card.status, to: newStatus)
+        }
 
         let phaseURL = sourceURL.deletingLastPathComponent().deletingLastPathComponent()
         let destinationDirectory = phaseURL.appendingPathComponent(newStatus.folderName, isDirectory: true)
@@ -49,6 +63,9 @@ actor CardMover {
         let stagingURL = stagingURL(for: destinationDirectory, filename: sourceURL.lastPathComponent)
 
         do {
+            if logHistoryEntry {
+                try appendHistoryEntry(for: card, destination: newStatus)
+            }
             try moveWithStaging(from: sourceURL, stagingURL: stagingURL, destinationURL: destinationURL)
         } catch {
             throw CardMoveError.moveFailed(error.localizedDescription)
@@ -78,5 +95,29 @@ actor CardMover {
 
     private func stagingURL(for directory: URL, filename: String) -> URL {
         directory.appendingPathComponent(".\(filename).staging-\(UUID().uuidString)")
+    }
+
+    private func appendHistoryEntry(for card: Card,
+                                    destination: CardStatus) throws {
+        let entry = Self.historyEntry(from: card.status,
+                                      to: destination,
+                                      dateProvider: dateProvider)
+
+        let writer = CardMarkdownWriter(parser: CardFileParser(), fileManager: fileManager)
+        let snapshot = try writer.loadSnapshot(for: card)
+        var draft = CardDetailFormDraft.from(card: snapshot.card, today: dateProvider())
+        draft.newHistoryEntry = entry
+        _ = try writer.saveFormDraft(draft, appendHistory: true, snapshot: snapshot)
+    }
+
+    private static func historyEntry(from source: CardStatus,
+                                     to destination: CardStatus,
+                                     dateProvider: @escaping () -> Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .iso8601)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        let today = formatter.string(from: dateProvider())
+        return "\(today) - Moved from \(source.displayName) to \(destination.displayName)."
     }
 }

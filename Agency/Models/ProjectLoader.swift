@@ -70,13 +70,18 @@ final class ProjectLoader {
         beginLoading(access: access, persistBookmark: true)
     }
 
-    func moveCard(_ card: Card, to status: CardStatus) async -> Result<Void, CardMoveError> {
+    func moveCard(_ card: Card,
+                  to status: CardStatus,
+                  logHistoryEntry: Bool) async -> Result<Void, CardMoveError> {
         guard let snapshot = loadedSnapshot else {
             return .failure(.snapshotUnavailable)
         }
 
         do {
-            try await cardMover.move(card: card, to: status, rootURL: snapshot.rootURL)
+            try await cardMover.move(card: card,
+                                     to: status,
+                                     rootURL: snapshot.rootURL,
+                                     logHistoryEntry: logHistoryEntry)
             await refreshSnapshot(afterFilesystemChangeAt: snapshot.rootURL)
             return .success(())
         } catch let moveError as CardMoveError {
