@@ -236,6 +236,40 @@ struct AgencyTests {
     }
 
     @MainActor
+    @Test func moverSucceedsEvenWhenHistoryWriteFails() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let projectURL = tempRoot.appendingPathComponent(ProjectConventions.projectRootName, isDirectory: true)
+        let phaseURL = projectURL.appendingPathComponent("phase-0-alpha", isDirectory: true)
+        try makePhaseDirectories(at: phaseURL, fileManager: fileManager)
+
+        let sourceURL = phaseURL.appendingPathComponent("backlog/0.6-demo.md")
+        let contents = richCardContents(code: "0.6", slug: "demo", historyEntry: "2025-01-01 - Seeded history.")
+        try contents.write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        // Make the source read-only so the destination inherits restrictive permissions, causing history write to fail.
+        try fileManager.setAttributes([.posixPermissions: NSNumber(value: Int16(0o444))], ofItemAtPath: sourceURL.path)
+
+        let card = try CardFileParser().parse(fileURL: sourceURL, contents: contents)
+        let mover = CardMover(fileManager: fileManager)
+
+        try await mover.move(card: card, to: .inProgress, rootURL: tempRoot, logHistoryEntry: true)
+
+        let destinationURL = phaseURL.appendingPathComponent("in-progress/0.6-demo.md")
+        #expect(fileManager.fileExists(atPath: destinationURL.path))
+
+        let movedContents = try String(contentsOf: destinationURL, encoding: .utf8)
+        let parsed = try CardFileParser().parse(fileURL: destinationURL, contents: movedContents)
+
+        // History entry should remain unchanged (no appended move entry) but move should still succeed.
+        #expect(parsed.history == ["2025-01-01 - Seeded history."])
+        #expect(parsed.status == .inProgress)
+    }
+
+    @MainActor
     @Test func inspectorDraftMirrorsParsedCard() async throws {
         let fileManager = FileManager.default
         let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)

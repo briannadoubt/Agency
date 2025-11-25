@@ -68,12 +68,15 @@ final class CardMover {
             try moveWithStaging(from: sourceURL, stagingURL: stagingURL, destinationURL: destinationURL)
 
             if logHistoryEntry {
-                let destinationCard = try CardFileParser().parse(fileURL: destinationURL,
-                                                                 contents: String(contentsOf: destinationURL,
-                                                                                  encoding: .utf8))
-                try appendHistoryEntry(for: destinationCard,
-                                       from: originalStatus,
-                                       to: newStatus)
+                do {
+                    let contents = try String(contentsOf: destinationURL, encoding: .utf8)
+                    let destinationCard = try CardFileParser().parse(fileURL: destinationURL, contents: contents)
+                    try appendHistoryEntry(for: destinationCard,
+                                           from: originalStatus,
+                                           to: newStatus)
+                } catch {
+                    // History logging is non-fatal; move already succeeded.
+                }
             }
         } catch {
             throw CardMoveError.moveFailed(error.localizedDescription)
