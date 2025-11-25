@@ -290,6 +290,8 @@ private struct PhaseDetail: View {
     @State private var includeHistoryEntry = true
     @State private var isCreatingCard = false
     @State private var logMovesToHistory = true
+    @State private var searchQuery = ""
+    @State private var ownerFilter: CardOwnerFilter = .any
 
     private var cardsByPath: [String: Card] {
         Dictionary(uniqueKeysWithValues: phase.cards.map { ($0.filePath.standardizedFileURL.path, $0) })
@@ -298,6 +300,24 @@ private struct PhaseDetail: View {
     private var selectedCard: Card? {
         guard let selectedCardPath else { return nil }
         return cardsByPath[selectedCardPath]
+    }
+
+    private var normalizedSearchQuery: String {
+        searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var ownerOptions: [CardOwnerFilter] {
+        let owners = Set(phase.cards.compactMap { $0.frontmatter.owner?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
+        let sortedOwners = owners.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        return [.any, .unassigned] + sortedOwners.map(CardOwnerFilter.owner)
+    }
+
+    private var filteredCards: [Card] {
+        CardSearchFilter(query: normalizedSearchQuery, ownerFilter: ownerFilter).filter(phase.cards)
+    }
+
+    private var filteredPhase: PhaseSnapshot {
+        PhaseSnapshot(phase: phase.phase, cards: filteredCards)
     }
 
     var body: some View {
@@ -331,7 +351,14 @@ private struct PhaseDetail: View {
             .font(DesignTokens.Typography.caption)
             .foregroundStyle(DesignTokens.Colors.textSecondary)
 
-            KanbanBoard(phase: phase,
+            SearchControls(searchQuery: $searchQuery,
+                            ownerFilter: $ownerFilter,
+                            ownerOptions: ownerOptions,
+                            onClearFilters: clearFilters)
+                .padding(.top, DesignTokens.Spacing.small)
+
+            KanbanBoard(phase: filteredPhase,
+                        searchQuery: normalizedSearchQuery,
                         draggingCardPath: $draggingCardPath,
                         selectedCardPath: $selectedCardPath,
                         onMove: handleMove,
@@ -392,6 +419,14 @@ private struct PhaseDetail: View {
             }
             isShowingDetailModal = true
         }
+        .onChange(of: filteredCards) { _, updatedCards in
+            guard let selectedCardPath else { return }
+            let visiblePaths = Set(updatedCards.map { $0.filePath.standardizedFileURL.path })
+            if !visiblePaths.contains(selectedCardPath) {
+                self.selectedCardPath = nil
+                isShowingDetailModal = false
+            }
+        }
         .onChange(of: phase.cards) { _, updatedCards in
             guard let selectedCardPath else {
                 isShowingDetailModal = false
@@ -446,6 +481,11 @@ private struct PhaseDetail: View {
         }
     }
 
+    private func clearFilters() {
+        searchQuery = ""
+        ownerFilter = .any
+    }
+
     private func createCard() {
         let trimmedTitle = newCardTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else {
@@ -476,6 +516,7 @@ private struct PhaseDetail: View {
 
 private struct KanbanBoard: View {
     let phase: PhaseSnapshot
+    let searchQuery: String
     @Binding var draggingCardPath: String?
     @Binding var selectedCardPath: String?
     let onMove: (String, CardStatus) -> Void
@@ -493,6 +534,7 @@ private struct KanbanBoard: View {
                 ForEach(CardStatus.allCases, id: \.self) { status in
                     KanbanColumn(status: status,
                                  cards: cards(for: status),
+                                 searchQuery: searchQuery,
                                  draggingCardPath: $draggingCardPath,
                                  selectedCardPath: $selectedCardPath,
                                  onMove: onMove,
@@ -519,6 +561,7 @@ private struct KanbanBoard: View {
 private struct KanbanColumn: View {
     let status: CardStatus
     let cards: [Card]
+    let searchQuery: String
     @Binding var draggingCardPath: String?
     @Binding var selectedCardPath: String?
     let onMove: (String, CardStatus) -> Void
@@ -562,6 +605,7 @@ private struct KanbanColumn: View {
                                          isGhosted: draggingCardPath == cardPath,
                                          isSelected: selectedCardPath == cardPath,
                                          isFocused: isFocused,
+                                         searchQuery: searchQuery,
                                          reduceMotion: reduceMotion,
                                          onToggleCriterion: onToggleCriterion)
                             }
@@ -574,6 +618,7 @@ private struct KanbanColumn: View {
                                          isGhosted: true,
                                          isSelected: false,
                                          isFocused: false,
+                                         searchQuery: searchQuery,
                                          reduceMotion: reduceMotion,
                                          onToggleCriterion: onToggleCriterion)
                             }
@@ -683,6 +728,7 @@ private struct CardTile: View {
     let isGhosted: Bool
     let isSelected: Bool
     let isFocused: Bool
+    let searchQuery: String
     let reduceMotion: Bool
     let onToggleCriterion: (Card, Int) -> Void
 
@@ -691,6 +737,10 @@ private struct CardTile: View {
     @State private var isHovering = false
 
     private let cornerRadius = DesignTokens.Radius.medium
+
+    private var normalizedQuery: String {
+        searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -704,16 +754,16 @@ private struct CardTile: View {
         VStack(alignment: .leading, spacing: verticalSpacing) {
             header
 
-            if let title = presentation.title, !title.isEmpty {
-                Text(title)
+            if presentation.title?.isEmpty == false {
+                highlightedText(presentation.title, query: normalizedQuery)
                     .font(DesignTokens.Typography.headline)
                     .foregroundStyle(DesignTokens.Colors.textPrimary)
                     .lineLimit(dynamicTypeSize.isAccessibilityCategory ? 2 : 1)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if let summary = presentation.summary, !summary.isEmpty {
-                Text(summary)
+            if presentation.summary?.isEmpty == false {
+                highlightedText(presentation.summary, query: normalizedQuery)
                     .font(DesignTokens.Typography.body)
                     .foregroundStyle(DesignTokens.Colors.textSecondary)
                     .lineLimit(dynamicTypeSize.isAccessibilityCategory ? 4 : 2)
@@ -771,7 +821,7 @@ private struct CardTile: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(presentation.code)
+            highlightedText(presentation.code, query: normalizedQuery)
                 .font(DesignTokens.Typography.code)
                 .padding(.horizontal, DesignTokens.Spacing.xSmall)
                 .padding(.vertical, DesignTokens.Spacing.grid)
@@ -827,6 +877,38 @@ private struct CardTile: View {
         case .high:
             return DesignTokens.Badges.highRisk
         }
+    }
+
+    private func highlightedText(_ text: String, query: String) -> Text {
+        highlightedText(Optional(text), query: query)
+    }
+
+    private func highlightedText(_ text: String?, query: String) -> Text {
+        guard let text, !text.isEmpty else { return Text("") }
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return Text(text) }
+
+        var result = Text("")
+        var searchStart = text.startIndex
+
+        while searchStart < text.endIndex,
+              let range = text.range(of: trimmedQuery, options: [.caseInsensitive], range: searchStart..<text.endIndex) {
+            if range.lowerBound > searchStart {
+                result = result + Text(String(text[searchStart..<range.lowerBound]))
+            }
+
+            result = result + Text(String(text[range]))
+                .foregroundStyle(accentColor)
+                .fontWeight(.semibold)
+
+            searchStart = range.upperBound
+        }
+
+        if searchStart < text.endIndex {
+            result = result + Text(String(text[searchStart..<text.endIndex]))
+        }
+
+        return result
     }
 
     private var accentColor: Color {
@@ -917,6 +999,85 @@ private struct CreateCardSheet: View {
                 try? await Task.sleep(for: .milliseconds(80))
                 isTitleFocused = true
             }
+        }
+    }
+}
+
+private struct SearchControls: View {
+    @Binding var searchQuery: String
+    @Binding var ownerFilter: CardOwnerFilter
+    let ownerOptions: [CardOwnerFilter]
+    let onClearFilters: () -> Void
+
+    @FocusState private var isSearchFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xSmall) {
+            HStack(spacing: DesignTokens.Spacing.medium) {
+                searchField
+
+                Menu {
+                    ForEach(ownerOptions, id: \.self) { option in
+                        Button {
+                            ownerFilter = option
+                        } label: {
+                            if ownerFilter == option {
+                                Label(ownerLabel(for: option), systemImage: "checkmark")
+                            } else {
+                                Text(ownerLabel(for: option))
+                            }
+                        }
+                    }
+                } label: {
+                    Label(ownerLabel(for: ownerFilter), systemImage: "person.2.fill")
+                        .labelStyle(.titleAndIcon)
+                        .padding(.horizontal, DesignTokens.Spacing.medium)
+                        .padding(.vertical, DesignTokens.Spacing.small)
+                        .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium).fill(DesignTokens.Colors.surface))
+                        .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium).stroke(DesignTokens.Colors.strokeMuted))
+                }
+
+                if hasActiveFilters {
+                    Button("Clear") {
+                        onClearFilters()
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Clear search and owner filters")
+                }
+            }
+
+            Text("Filter by code, title, summary, or notes. Owner filter matches frontmatter.")
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+        }
+    }
+
+    private var hasActiveFilters: Bool {
+        !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || ownerFilter != .any
+    }
+
+    private var searchField: some View {
+        HStack(spacing: DesignTokens.Spacing.small) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+            TextField("Search cards", text: $searchQuery)
+                .textFieldStyle(.plain)
+                .focused($isSearchFocused)
+        }
+        .padding(.horizontal, DesignTokens.Spacing.medium)
+        .padding(.vertical, DesignTokens.Spacing.small)
+        .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium).fill(DesignTokens.Colors.surface))
+        .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium).stroke(DesignTokens.Colors.strokeMuted))
+    }
+
+    private func ownerLabel(for option: CardOwnerFilter) -> String {
+        switch option {
+        case .any:
+            return "Any owner"
+        case .unassigned:
+            return "Unassigned"
+        case .owner(let name):
+            return name
         }
     }
 }
