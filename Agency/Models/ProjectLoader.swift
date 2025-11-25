@@ -24,6 +24,7 @@ final class ProjectLoader {
     private let scanner: ProjectScanner
     private let cardMover: CardMover
     private let cardCreator: CardCreator
+    private let cardClaimer: CardClaimer
     private let editor = CardEditingPipeline.shared
 
     private var watchTask: Task<Void, Never>?
@@ -37,7 +38,8 @@ final class ProjectLoader {
          fileManager: FileManager = .default,
          scanner: ProjectScanner = ProjectScanner(),
          cardMover: CardMover = CardMover(),
-         cardCreator: CardCreator = CardCreator()) {
+         cardCreator: CardCreator = CardCreator(),
+         cardClaimer: CardClaimer = CardClaimer()) {
         self.bookmarkStore = bookmarkStore
         self.validator = validator
         self.watcher = watcher
@@ -45,6 +47,7 @@ final class ProjectLoader {
         self.scanner = scanner
         self.cardMover = cardMover
         self.cardCreator = cardCreator
+        self.cardClaimer = cardClaimer
     }
 
     @MainActor deinit {
@@ -116,6 +119,42 @@ final class ProjectLoader {
             return .success(created)
         } catch let creationError as CardCreationError {
             return .failure(creationError)
+        } catch {
+            return .failure(.writeFailed(error.localizedDescription))
+        }
+    }
+
+    func previewClaim(owner: String? = nil) -> Result<Card, CardClaimError> {
+        guard let snapshot = loadedSnapshot else { return .failure(.snapshotUnavailable) }
+
+        do {
+            let candidate = try cardClaimer.previewClaim(in: snapshot)
+            return .success(candidate)
+        } catch let error as CardClaimError {
+            return .failure(error)
+        } catch {
+            return .failure(.writeFailed(error.localizedDescription))
+        }
+    }
+
+    func claimNextCard(owner: String? = nil,
+                       assignOwner: Bool = true,
+                       dryRun: Bool = false) async -> Result<Card, CardClaimError> {
+        guard let snapshot = loadedSnapshot else { return .failure(.snapshotUnavailable) }
+
+        do {
+            let claimed = try await cardClaimer.claimLowestBacklog(in: snapshot,
+                                                                   assignOwner: assignOwner,
+                                                                   preferredOwner: owner,
+                                                                   dryRun: dryRun)
+
+            if !dryRun {
+                await refreshSnapshot(afterFilesystemChangeAt: snapshot.rootURL)
+            }
+
+            return .success(claimed)
+        } catch let error as CardClaimError {
+            return .failure(error)
         } catch {
             return .failure(.writeFailed(error.localizedDescription))
         }
