@@ -29,6 +29,7 @@ struct CardDetailModal: View {
     let phase: Phase
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var mode: CardDetailMode = .view
     @State private var snapshot: CardDocumentSnapshot?
@@ -113,7 +114,7 @@ struct CardDetailModal: View {
 
                 Label("Phase \(phase.number): \(phase.label)", systemImage: "flag")
                     .font(DesignTokens.Typography.caption)
-                    .badgeStyle(DesignTokens.Badges.info)
+                    .badgeStyle(DesignTokens.Badges.info(for: colorScheme))
 
                 Button {
                     dismiss()
@@ -362,16 +363,22 @@ private struct CardViewMode: View {
     let formDraft: CardDetailFormDraft
     let phase: Phase
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.large) {
                 MetadataGrid(formDraft: formDraft, phase: phase)
                 SummaryBlock(summary: formDraft.summary)
-                CriteriaList(criteria: formDraft.criteria)
-                NotesBlock(notes: formDraft.notes)
-                HistoryTimeline(history: formDraft.history)
+                CriteriaList(criteria: formDraft.criteria, accentColor: accentColor)
+                NotesBlock(notes: formDraft.notes, accentColor: accentColor)
+                HistoryTimeline(history: formDraft.history, accentColor: accentColor)
             }
         }
+    }
+
+    private var accentColor: Color {
+        DesignTokens.Colors.preferredAccent(for: colorScheme)
     }
 }
 
@@ -517,12 +524,14 @@ private struct MetadataGrid: View {
     let formDraft: CardDetailFormDraft
     let phase: Phase
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+        VStack(alignment: .leading, spacing: verticalSpacing) {
             Text("Metadata")
                 .font(DesignTokens.Typography.headline)
 
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: DesignTokens.Spacing.small) {
+            LazyVGrid(columns: columns, spacing: verticalSpacing) {
                 metadataCell(label: "Owner", value: formDraft.owner)
                 metadataCell(label: "Branch", value: formDraft.branch)
                 metadataCell(label: "Agent Flow", value: formDraft.agentFlow)
@@ -537,6 +546,19 @@ private struct MetadataGrid: View {
         .surfaceStyle(DesignTokens.Surfaces.card())
     }
 
+    private var columns: [GridItem] {
+        if dynamicTypeSize.isAccessibilityCategory {
+            return [GridItem(.flexible())]
+        }
+        return [GridItem(.flexible()), GridItem(.flexible())]
+    }
+
+    private var verticalSpacing: CGFloat {
+        dynamicTypeSize.isAccessibilityCategory ?
+            DesignTokens.Accessibility.scaledSpacing(DesignTokens.Spacing.small) :
+            DesignTokens.Spacing.small
+    }
+
     private func metadataCell(label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
@@ -545,6 +567,7 @@ private struct MetadataGrid: View {
             Text(value.isEmpty ? "—" : value)
                 .font(DesignTokens.Typography.body)
                 .foregroundStyle(DesignTokens.Colors.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DesignTokens.Spacing.small)
@@ -571,6 +594,7 @@ private struct SummaryBlock: View {
 
 private struct CriteriaList: View {
     let criteria: [CardDetailFormDraft.Criterion]
+    let accentColor: Color
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
@@ -585,7 +609,7 @@ private struct CriteriaList: View {
                     ForEach(criteria) { criterion in
                         HStack(spacing: DesignTokens.Spacing.grid) {
                             Image(systemName: criterion.isComplete ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(criterion.isComplete ? DesignTokens.Colors.accent : DesignTokens.Colors.textSecondary)
+                                .foregroundStyle(criterion.isComplete ? accentColor : DesignTokens.Colors.textSecondary)
                             Text(criterion.title)
                                 .strikethrough(criterion.isComplete)
                                 .foregroundStyle(DesignTokens.Colors.textPrimary)
@@ -601,6 +625,7 @@ private struct CriteriaList: View {
 
 private struct NotesBlock: View {
     let notes: String
+    let accentColor: Color
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
@@ -612,7 +637,7 @@ private struct NotesBlock: View {
                 .padding()
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.small)
-                    .fill(DesignTokens.Colors.accent.opacity(0.1)))
+                    .fill(accentColor.opacity(0.1)))
         }
         .padding()
         .surfaceStyle(DesignTokens.Surfaces.card())
@@ -621,6 +646,7 @@ private struct NotesBlock: View {
 
 private struct HistoryTimeline: View {
     let history: [String]
+    let accentColor: Color
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
@@ -635,7 +661,7 @@ private struct HistoryTimeline: View {
                     ForEach(Array(history.enumerated()), id: \.offset) { index, entry in
                         HStack(alignment: .top, spacing: DesignTokens.Spacing.small) {
                             Circle()
-                                .fill(index == history.count - 1 ? DesignTokens.Colors.accent : DesignTokens.Colors.stroke)
+                                .fill(index == history.count - 1 ? accentColor : DesignTokens.Colors.stroke)
                                 .frame(width: 10, height: 10)
                                 .padding(.top, 3)
                             Text(entry)

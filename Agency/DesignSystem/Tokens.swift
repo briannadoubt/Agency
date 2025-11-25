@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 enum DesignTokens {
     enum Colors {
@@ -21,15 +24,37 @@ enum DesignTokens {
         private static func named(_ name: String) -> Color {
             Color(name, bundle: .main)
         }
+
+        static func preferredAccent(for colorScheme: ColorScheme) -> Color {
+            #if os(macOS)
+            let appearanceName: NSAppearance.Name = colorScheme == .dark ? .darkAqua : .aqua
+            if let appearance = NSAppearance(named: appearanceName) {
+                var accentColor: NSColor?
+                var canvasColor: NSColor?
+
+                appearance.performAsCurrentDrawingAppearance {
+                    accentColor = NSColor.controlAccentColor
+                    canvasColor = NSColor(named: "Canvas", bundle: .main)
+                }
+
+                if let accentColor,
+                   let canvasColor,
+                   Contrast.ratio(foreground: accentColor, background: canvasColor) >= 4.5 {
+                    return Color(nsColor: accentColor)
+                }
+            }
+            #endif
+            return Colors.accent
+        }
     }
 
     enum Typography {
-        static let titleLarge = Font.system(size: 24, weight: .semibold, design: .rounded)
-        static let title = Font.system(size: 20, weight: .semibold, design: .rounded)
-        static let headline = Font.system(size: 17, weight: .semibold, design: .rounded)
-        static let body = Font.system(size: 15, weight: .regular, design: .rounded)
-        static let caption = Font.system(size: 13, weight: .regular, design: .rounded)
-        static let code = Font.system(size: 13, weight: .semibold, design: .monospaced)
+        static let titleLarge = Font.system(.title2, design: .rounded).weight(.semibold)
+        static let title = Font.system(.title3, design: .rounded).weight(.semibold)
+        static let headline = Font.system(.headline, design: .rounded)
+        static let body = Font.system(.body, design: .rounded)
+        static let caption = Font.system(.caption, design: .rounded)
+        static let code = Font.system(.footnote, design: .monospaced).weight(.semibold)
     }
 
     enum Spacing {
@@ -92,10 +117,14 @@ enum DesignTokens {
 
     enum Badges {
         static let neutral = BadgeStyle(foreground: Colors.textSecondary, background: Colors.stroke)
-        static let info = BadgeStyle(foreground: Colors.accent, background: Colors.accent.opacity(0.2))
         static let lowRisk = BadgeStyle(foreground: Colors.riskLow.foreground, background: Colors.riskLow.background)
         static let mediumRisk = BadgeStyle(foreground: Colors.riskMedium.foreground, background: Colors.riskMedium.background)
         static let highRisk = BadgeStyle(foreground: Colors.riskHigh.foreground, background: Colors.riskHigh.background)
+
+        static func info(for colorScheme: ColorScheme) -> BadgeStyle {
+            let accent = Colors.preferredAccent(for: colorScheme)
+            return BadgeStyle(foreground: accent, background: accent.opacity(0.2))
+        }
     }
 
     enum Surfaces {
@@ -206,6 +235,12 @@ private struct SurfaceModifier: ViewModifier {
     }
 }
 
+extension DynamicTypeSize {
+    var isAccessibilityCategory: Bool {
+        self >= .accessibility1
+    }
+}
+
 #Preview("Tokens Overview") {
     ScrollView {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.large) {
@@ -243,7 +278,7 @@ private struct SurfaceModifier: ViewModifier {
                     Text("low").badgeStyle(DesignTokens.Badges.lowRisk)
                     Text("medium").badgeStyle(DesignTokens.Badges.mediumRisk)
                     Text("high").badgeStyle(DesignTokens.Badges.highRisk)
-                    Text("info").badgeStyle(DesignTokens.Badges.info)
+                    Text("info").badgeStyle(DesignTokens.Badges.info(for: .dark))
                 }
             }
 

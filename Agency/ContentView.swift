@@ -411,6 +411,7 @@ private struct KanbanColumn: View {
     let focusedCardPath: FocusState<String?>.Binding
     let reduceMotion: Bool
 
+    @Environment(\.colorScheme) private var colorScheme
     @State private var isTargeted: Bool = false
 
     private let columnCornerRadius = DesignTokens.Radius.large
@@ -423,7 +424,7 @@ private struct KanbanColumn: View {
         let boardAnimation: Animation? = reduceMotion ? nil : DesignTokens.Motion.board
 
         return VStack(alignment: .leading, spacing: 10) {
-            ColumnHeader(status: status, count: cards.count)
+            ColumnHeader(status: status, count: cards.count, accent: DesignTokens.Colors.preferredAccent(for: colorScheme))
 
             ScrollView {
                 LazyVStack(spacing: DesignTokens.Spacing.small) {
@@ -490,17 +491,18 @@ private struct KanbanColumn: View {
 
     private func columnBackground(isTargeted: Bool) -> some View {
         RoundedRectangle(cornerRadius: columnCornerRadius, style: .continuous)
-            .fill(isTargeted ? DesignTokens.Colors.accent.opacity(0.16) : DesignTokens.Colors.surface)
+            .fill(isTargeted ? DesignTokens.Colors.preferredAccent(for: colorScheme).opacity(0.16) : DesignTokens.Colors.surface)
     }
 
     private func columnBorder(isTargeted: Bool) -> Color {
-        isTargeted ? DesignTokens.Colors.accent : DesignTokens.Colors.stroke
+        isTargeted ? DesignTokens.Colors.preferredAccent(for: colorScheme) : DesignTokens.Colors.stroke
     }
 }
 
 private struct ColumnHeader: View {
     let status: CardStatus
     let count: Int
+    let accent: Color
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
@@ -511,7 +513,7 @@ private struct ColumnHeader: View {
                 .font(DesignTokens.Typography.caption.weight(.bold))
                 .padding(.horizontal, DesignTokens.Spacing.xSmall)
                 .padding(.vertical, DesignTokens.Spacing.grid)
-                .background(Capsule().fill(DesignTokens.Colors.accent.opacity(0.14)))
+                .background(Capsule().fill(accent.opacity(0.14)))
         }
         .foregroundStyle(DesignTokens.Colors.textPrimary)
     }
@@ -565,29 +567,39 @@ private struct CardTile: View {
     let isFocused: Bool
     let reduceMotion: Bool
 
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var isHovering = false
 
     private let cornerRadius = DesignTokens.Radius.medium
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let verticalSpacing = dynamicTypeSize.isAccessibilityCategory ?
+            DesignTokens.Accessibility.scaledSpacing(DesignTokens.Spacing.small) :
+            DesignTokens.Spacing.small
+        let padding = dynamicTypeSize.isAccessibilityCategory ?
+            DesignTokens.Accessibility.scaledSpacing(DesignTokens.Spacing.medium) :
+            DesignTokens.Spacing.medium
 
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+        VStack(alignment: .leading, spacing: verticalSpacing) {
             header
 
             if let title = presentation.title, !title.isEmpty {
                 Text(title)
                     .font(DesignTokens.Typography.headline)
                     .foregroundStyle(DesignTokens.Colors.textPrimary)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilityCategory ? 2 : 1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if let summary = presentation.summary, !summary.isEmpty {
                 Text(summary)
                     .font(DesignTokens.Typography.body)
                     .foregroundStyle(DesignTokens.Colors.textSecondary)
-                    .lineLimit(2)
+                    .lineLimit(dynamicTypeSize.isAccessibilityCategory ? 4 : 2)
                     .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             metadataRow
@@ -595,10 +607,10 @@ private struct CardTile: View {
             if presentation.totalCriteria > 0 {
                 ProgressView(value: Double(presentation.completedCriteria), total: Double(presentation.totalCriteria))
                     .progressViewStyle(.linear)
-                    .tint(DesignTokens.Colors.accent)
+                    .tint(accentColor)
             }
         }
-        .padding(DesignTokens.Spacing.medium)
+        .padding(padding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(shape.fill(backgroundColor))
         .overlay(shape.stroke(borderColor, lineWidth: isFocused ? 2 : 1))
@@ -622,9 +634,9 @@ private struct CardTile: View {
     }
 
     private var borderColor: Color {
-        if isFocused { return DesignTokens.Colors.accent }
-        if isGhosted { return DesignTokens.Colors.accent }
-        if isSelected { return DesignTokens.Colors.accent.opacity(0.8) }
+        if isFocused { return accentColor }
+        if isGhosted { return accentColor }
+        if isSelected { return accentColor.opacity(0.8) }
         return isHovering ? DesignTokens.Colors.stroke : DesignTokens.Colors.strokeMuted
     }
 
@@ -647,14 +659,33 @@ private struct CardTile: View {
     }
 
     private var metadataRow: some View {
-        HStack(spacing: DesignTokens.Spacing.xSmall) {
-            MetadataPill(icon: "person.fill", text: presentation.owner ?? "Unassigned")
+        let spacing = dynamicTypeSize.isAccessibilityCategory ?
+            DesignTokens.Accessibility.scaledSpacing(DesignTokens.Spacing.xSmall) :
+            DesignTokens.Spacing.xSmall
 
-            MetadataPill(icon: "arrow.triangle.branch", text: presentation.branch ?? "No branch", emphasize: presentation.branch != nil)
+        return Group {
+            if dynamicTypeSize.isAccessibilityCategory {
+                VStack(alignment: .leading, spacing: spacing) {
+                    MetadataPill(icon: "person.fill", text: presentation.owner ?? "Unassigned", allowWrapping: true)
 
-            MetadataPill(icon: "bolt.horizontal", text: presentation.agentStatus?.capitalized ?? "Idle")
+                    MetadataPill(icon: "arrow.triangle.branch", text: presentation.branch ?? "No branch", emphasize: presentation.branch != nil, allowWrapping: true)
 
-            MetadataPill(icon: "arrow.triangle.2.circlepath", text: presentation.parallelizable ? "Parallel" : "Serial", emphasize: presentation.parallelizable)
+                    MetadataPill(icon: "bolt.horizontal", text: presentation.agentStatus?.capitalized ?? "Idle", allowWrapping: true)
+
+                    MetadataPill(icon: "arrow.triangle.2.circlepath", text: presentation.parallelizable ? "Parallel" : "Serial", emphasize: presentation.parallelizable, allowWrapping: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(spacing: spacing) {
+                    MetadataPill(icon: "person.fill", text: presentation.owner ?? "Unassigned")
+
+                    MetadataPill(icon: "arrow.triangle.branch", text: presentation.branch ?? "No branch", emphasize: presentation.branch != nil)
+
+                    MetadataPill(icon: "bolt.horizontal", text: presentation.agentStatus?.capitalized ?? "Idle")
+
+                    MetadataPill(icon: "arrow.triangle.2.circlepath", text: presentation.parallelizable ? "Parallel" : "Serial", emphasize: presentation.parallelizable)
+                }
+            }
         }
     }
 
@@ -668,12 +699,19 @@ private struct CardTile: View {
             return DesignTokens.Badges.highRisk
         }
     }
+
+    private var accentColor: Color {
+        DesignTokens.Colors.preferredAccent(for: colorScheme)
+    }
 }
 
 private struct MetadataPill: View {
     let icon: String
     let text: String
     var emphasize: Bool = false
+    var allowWrapping: Bool = false
+
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.grid) {
@@ -681,12 +719,13 @@ private struct MetadataPill: View {
                 .font(.system(size: 12, weight: .semibold))
             Text(text)
                 .font(DesignTokens.Typography.caption)
-                .lineLimit(1)
+                .lineLimit(allowWrapping ? nil : 1)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, DesignTokens.Spacing.small)
         .padding(.vertical, DesignTokens.Spacing.grid)
-        .background(Capsule().fill(emphasize ? DesignTokens.Colors.accent.opacity(0.18) : DesignTokens.Colors.stroke.opacity(0.35)))
-        .foregroundStyle(emphasize ? DesignTokens.Colors.accent : DesignTokens.Colors.textSecondary)
+        .background(Capsule().fill(emphasize ? DesignTokens.Colors.preferredAccent(for: colorScheme).opacity(0.18) : DesignTokens.Colors.stroke.opacity(0.35)))
+        .foregroundStyle(emphasize ? DesignTokens.Colors.preferredAccent(for: colorScheme) : DesignTokens.Colors.textSecondary)
     }
 }
 
