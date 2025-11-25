@@ -242,8 +242,15 @@ private struct ValidationIssuesView: View {
                     Circle()
                         .fill(color(for: issue.severity))
                         .frame(width: 10, height: 10)
-                    Text(issue.message)
-                        .font(.subheadline)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(issue.message)
+                            .font(.subheadline)
+                        if let suggestion = issue.suggestedFix {
+                            Text("Fix: \(suggestion)")
+                                .font(.caption)
+                                .foregroundStyle(DesignTokens.Colors.textSecondary)
+                        }
+                    }
                     Spacer()
                     Text(issue.path)
                         .font(.caption)

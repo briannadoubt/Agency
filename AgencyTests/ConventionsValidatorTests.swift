@@ -38,6 +38,58 @@ struct ConventionsValidatorTests {
 
         #expect(issues.contains { $0.message.contains("<phase>.<task>-slug.md") })
     }
+
+    @Test func missingSectionIsFlaggedWithWarning() throws {
+        let root = try makeValidProject()
+        defer { cleanup(root) }
+
+        let card = root.appendingPathComponent("project/phase-0-setup/backlog/0.1-conventions.md")
+        let broken = """
+        ---
+        owner: bri
+        ---
+
+        # 0.1 Conventions
+
+        Summary:
+        text
+
+        Acceptance Criteria:
+        - [ ] one
+
+        History:
+        - 2025-01-01: seeded
+        """
+        try broken.write(to: card, atomically: true, encoding: .utf8)
+
+        let issues = ConventionsValidator(fileManager: fileManager).validateProject(at: root)
+
+        #expect(issues.contains { $0.severity == .warning && $0.message.contains("Notes") })
+    }
+
+    @Test func duplicateCodesAreReported() throws {
+        let root = try makeValidProject()
+        defer { cleanup(root) }
+
+        let duplicate = root.appendingPathComponent("project/phase-0-setup/done/0.1-conventions.md")
+        try fileManager.copyItem(at: root.appendingPathComponent("project/phase-0-setup/backlog/0.1-conventions.md"), to: duplicate)
+
+        let issues = ConventionsValidator(fileManager: fileManager).validateProject(at: root)
+
+        #expect(issues.contains { $0.message.contains("Duplicate card code") })
+    }
+
+    @Test func orphanedFilesAreReported() throws {
+        let root = try makeValidProject()
+        defer { cleanup(root) }
+
+        let orphan = root.appendingPathComponent("project/phase-0-setup/readme.txt")
+        fileManager.createFile(atPath: orphan.path, contents: Data())
+
+        let issues = ConventionsValidator(fileManager: fileManager).validateProject(at: root)
+
+        #expect(issues.contains { $0.severity == .warning && $0.message.contains("Orphaned") })
+    }
 }
 
 private extension ConventionsValidatorTests {
@@ -50,8 +102,33 @@ private extension ConventionsValidatorTests {
         for status in CardStatus.allCases {
             let statusURL = phase.appendingPathComponent(status.folderName, isDirectory: true)
             try fileManager.createDirectory(at: statusURL, withIntermediateDirectories: true)
-            let cardName = "0.1-conventions.md"
-            fileManager.createFile(atPath: statusURL.appendingPathComponent(cardName).path, contents: Data())
+            let minor: String
+            switch status {
+            case .backlog: minor = "1"
+            case .inProgress: minor = "2"
+            case .done: minor = "3"
+            }
+            let cardName = "0.\(minor)-conventions.md"
+            let markdown = """
+            ---
+            owner: bri
+            ---
+
+            # 0.\(minor) Conventions
+
+            Summary:
+            valid
+
+            Acceptance Criteria:
+            - [ ] first
+
+            Notes:
+            none
+
+            History:
+            - 2025-01-01: seeded
+            """
+            try markdown.write(to: statusURL.appendingPathComponent(cardName), atomically: true, encoding: .utf8)
         }
 
         return root
