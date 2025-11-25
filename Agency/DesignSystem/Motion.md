@@ -12,4 +12,4 @@
 - Card hover: `DesignTokens.Motion.hover` (or disabled under Reduce Motion).
 - Board/column/card layout changes: `DesignTokens.Motion.board`.
 - Detail modal mode switching: `DesignTokens.Motion.modal`.
-- Focus/keyboard: cards and controls use the native macOS focus ring; hover/tint changes remain visible when motion is reduced.
+- Focus/keyboard: cards are focusable with Tab; Space/Return activate (open modal); accent focus ring applied. Hover/tint changes remain visible when motion is reduced.
