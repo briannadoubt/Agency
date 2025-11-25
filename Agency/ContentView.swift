@@ -290,6 +290,7 @@ private struct PhaseDetail: View {
                         onSelect: handleSelect,
                         reduceMotion: reduceMotion)
                 .frame(minHeight: DesignTokens.Layout.boardMinimumHeight)
+                // TODO(Phase2): Feed board updates from live editing feeds once data plumbing lands.
 
         }
         .alert("Move failed", isPresented: Binding(get: { moveError != nil },
