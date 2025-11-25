@@ -73,6 +73,23 @@ enum DesignTokens {
         static let focus = ShadowStyle(color: Colors.accent.opacity(0.35), radius: 10, x: 0, y: 0)
     }
 
+    enum Motion {
+        /// Quick hover/press affordances.
+        static let hover = Animation.easeInOut(duration: 0.16)
+        /// Board/card layout changes (drag/drop, list updates).
+        static let board = Animation.snappy(duration: 0.22, extraBounce: 0.1)
+        /// Modal mode switches and sheet content changes.
+        static let modal = Animation.easeInOut(duration: 0.18)
+
+        static let hoverDuration: CGFloat = 0.16
+        static let boardDuration: CGFloat = 0.22
+        static let modalDuration: CGFloat = 0.18
+
+        static func enabled(_ animation: Animation, reduceMotion: Bool) -> Animation? {
+            reduceMotion ? nil : animation
+        }
+    }
+
     enum Badges {
         static let neutral = BadgeStyle(foreground: Colors.textSecondary, background: Colors.stroke)
         static let info = BadgeStyle(foreground: Colors.accent, background: Colors.accent.opacity(0.2))

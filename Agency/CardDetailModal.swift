@@ -29,6 +29,7 @@ struct CardDetailModal: View {
     let phase: Phase
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var mode: CardDetailMode = .view
     @State private var snapshot: CardDocumentSnapshot?
     @State private var pendingRawSnapshot: CardDocumentSnapshot?
@@ -72,7 +73,7 @@ struct CardDetailModal: View {
             .padding(.horizontal, DesignTokens.Spacing.large)
             .padding(.bottom, DesignTokens.Spacing.large)
             .background(DesignTokens.Colors.canvas)
-            .animation(.easeInOut(duration: 0.16), value: mode)
+            .animation(DesignTokens.Motion.enabled(DesignTokens.Motion.modal, reduceMotion: reduceMotion), value: mode)
 
             footer
         }
