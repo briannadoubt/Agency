@@ -45,6 +45,7 @@ struct ValidationIssue: Equatable {
     let path: String
     let message: String
     let severity: Severity
+    let suggestedFix: String?
 }
 
 /// Shared constants and helpers for filesystem conventions.
@@ -57,9 +58,12 @@ enum ProjectConventions {
 /// Validates the folder and naming conventions for the markdown-driven kanban project.
 struct ConventionsValidator {
     private let fileManager: FileManager
+    private let parser: CardFileParser
 
-    init(fileManager: FileManager = .default) {
+    init(fileManager: FileManager = .default,
+         parser: CardFileParser = CardFileParser()) {
         self.fileManager = fileManager
+        self.parser = parser
     }
 
     /// Validates the repository at the given root URL.
@@ -67,11 +71,13 @@ struct ConventionsValidator {
     func validateProject(at rootURL: URL) -> [ValidationIssue] {
         var issues: [ValidationIssue] = []
         let projectURL = rootURL.appendingPathComponent(ProjectConventions.projectRootName)
+        var cards: [(code: String, path: String)] = []
 
         guard directoryExists(at: projectURL) else {
             issues.append(ValidationIssue(path: relativePath(of: projectURL, from: rootURL),
                                           message: "Missing \(ProjectConventions.projectRootName) root folder.",
-                                          severity: .error))
+                                          severity: .error,
+                                          suggestedFix: "Create a project/ folder containing phase-<n>-<name> directories."))
             return issues
         }
 
@@ -81,19 +87,37 @@ struct ConventionsValidator {
         if phaseDirectories.isEmpty {
             issues.append(ValidationIssue(path: relativePath(of: projectURL, from: rootURL),
                                           message: "No phase directories found (expected folders like phase-0-setup).",
-                                          severity: .error))
+                                          severity: .error,
+                                          suggestedFix: "Add a phase-* directory with backlog/in-progress/done children."))
             return issues
         }
 
         for phaseURL in phaseDirectories {
-            issues.append(contentsOf: validatePhase(at: phaseURL, rootURL: rootURL))
+            let (phaseIssues, phaseCards) = validatePhase(at: phaseURL, rootURL: rootURL)
+            issues.append(contentsOf: phaseIssues)
+            cards.append(contentsOf: phaseCards)
         }
+
+        issues.append(contentsOf: duplicateCodeIssues(from: cards))
 
         return issues
     }
 
-    private func validatePhase(at phaseURL: URL, rootURL: URL) -> [ValidationIssue] {
+    private func validatePhase(at phaseURL: URL, rootURL: URL) -> ([ValidationIssue], [(code: String, path: String)]) {
         var issues: [ValidationIssue] = []
+        var cards: [(code: String, path: String)] = []
+
+        let statusFolders = Set(CardStatus.allCases.map { $0.folderName })
+
+        for entry in entries(at: phaseURL) {
+            let name = entry.lastPathComponent
+            if statusFolders.contains(name) { continue }
+
+            issues.append(ValidationIssue(path: relativePath(of: entry, from: rootURL),
+                                          message: "Orphaned item inside phase; not under a status folder.",
+                                          severity: .warning,
+                                          suggestedFix: "Move to one of: backlog/, in-progress/, done/."))
+        }
 
         for status in CardStatus.allCases {
             let statusURL = phaseURL.appendingPathComponent(status.folderName)
@@ -101,18 +125,22 @@ struct ConventionsValidator {
             guard directoryExists(at: statusURL) else {
                 issues.append(ValidationIssue(path: relativePath(of: statusURL, from: rootURL),
                                               message: "Missing \(status.folderName) folder under \(phaseURL.lastPathComponent).",
-                                              severity: .error))
+                                              severity: .error,
+                                              suggestedFix: "Create \(status.folderName) and move relevant cards into it."))
                 continue
             }
 
-            issues.append(contentsOf: validateCards(in: statusURL, rootURL: rootURL))
+            let (cardIssues, scannedCards) = validateCards(in: statusURL, rootURL: rootURL)
+            issues.append(contentsOf: cardIssues)
+            cards.append(contentsOf: scannedCards)
         }
 
-        return issues
+        return (issues, cards)
     }
 
-    private func validateCards(in statusURL: URL, rootURL: URL) -> [ValidationIssue] {
+    private func validateCards(in statusURL: URL, rootURL: URL) -> ([ValidationIssue], [(code: String, path: String)]) {
         var issues: [ValidationIssue] = []
+        var cards: [(code: String, path: String)] = []
 
         for entry in files(at: statusURL) {
             let name = entry.lastPathComponent
@@ -121,8 +149,67 @@ struct ConventionsValidator {
             if !cardFilenameIsValid(name) {
                 issues.append(ValidationIssue(path: relativePath(of: entry, from: rootURL),
                                               message: "Card filename does not match <phase>.<task>-slug.md convention.",
-                                              severity: .error))
+                                              severity: .error,
+                                              suggestedFix: "Rename to <phase>.<task>-slug.md (e.g. 4.3-validator.md)."))
+                continue
             }
+
+            let code = String(name.split(separator: "-").first ?? "")
+            cards.append((code: code, path: relativePath(of: entry, from: rootURL)))
+
+            guard let contents = try? String(contentsOf: entry, encoding: .utf8) else {
+                issues.append(ValidationIssue(path: relativePath(of: entry, from: rootURL),
+                                              message: "Unable to read file contents.",
+                                              severity: .warning,
+                                              suggestedFix: "Confirm file permissions and UTF-8 encoding."))
+                continue
+            }
+
+            do {
+                let card = try parser.parse(fileURL: entry, contents: contents)
+                issues.append(contentsOf: structuralIssues(for: card, rootURL: rootURL))
+            } catch {
+                issues.append(ValidationIssue(path: relativePath(of: entry, from: rootURL),
+                                              message: "Failed to parse card: \(error.localizedDescription)",
+                                              severity: .error,
+                                              suggestedFix: "Fix YAML frontmatter or section headings, then re-run validator."))
+            }
+        }
+
+        return (issues, cards)
+    }
+
+    private func structuralIssues(for card: Card, rootURL: URL) -> [ValidationIssue] {
+        var issues: [ValidationIssue] = []
+        let requiredSections = ["Summary", "Acceptance Criteria", "Notes", "History"]
+
+        if card.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+            issues.append(ValidationIssue(path: relativePath(of: card.filePath, from: rootURL),
+                                          message: "Missing top-level heading (e.g. '# \(card.code) <title>').",
+                                          severity: .warning,
+                                          suggestedFix: "Add a '# \(card.code) <title>' heading at the top of the file."))
+        }
+
+        for section in requiredSections where card.section(named: section) == nil {
+            issues.append(ValidationIssue(path: relativePath(of: card.filePath, from: rootURL),
+                                          message: "Missing required section heading: \(section).",
+                                          severity: .warning,
+                                          suggestedFix: "Add a '\(section):' section to the card."))
+        }
+
+        return issues
+    }
+
+    private func duplicateCodeIssues(from cards: [(code: String, path: String)]) -> [ValidationIssue] {
+        var issues: [ValidationIssue] = []
+        let grouped = Dictionary(grouping: cards, by: { $0.code })
+
+        for (code, entries) in grouped where entries.count > 1 {
+            let paths = entries.map { $0.path }.joined(separator: ", ")
+            issues.append(ValidationIssue(path: paths,
+                                          message: "Duplicate card code detected: \(code).",
+                                          severity: .error,
+                                          suggestedFix: "Rename duplicate filenames so each <phase>.<task> code is unique within the project."))
         }
 
         return issues
@@ -142,6 +229,12 @@ struct ConventionsValidator {
                                                                   options: [.skipsHiddenFiles]) else { return [] }
 
         return contents.filter { isRegularFile($0) }
+    }
+
+    private func entries(at url: URL) -> [URL] {
+        (try? fileManager.contentsOfDirectory(at: url,
+                                              includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
+                                              options: [.skipsHiddenFiles])) ?? []
     }
 
     private func isDirectory(_ url: URL) -> Bool {
