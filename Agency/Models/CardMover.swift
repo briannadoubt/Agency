@@ -62,11 +62,19 @@ final class CardMover {
         let destinationURL = destinationDirectory.appendingPathComponent(sourceURL.lastPathComponent, isDirectory: false)
         let stagingURL = stagingURL(for: destinationDirectory, filename: sourceURL.lastPathComponent)
 
+        let originalStatus = card.status
+
         do {
-            if logHistoryEntry {
-                try appendHistoryEntry(for: card, destination: newStatus)
-            }
             try moveWithStaging(from: sourceURL, stagingURL: stagingURL, destinationURL: destinationURL)
+
+            if logHistoryEntry {
+                let destinationCard = try CardFileParser().parse(fileURL: destinationURL,
+                                                                 contents: String(contentsOf: destinationURL,
+                                                                                  encoding: .utf8))
+                try appendHistoryEntry(for: destinationCard,
+                                       from: originalStatus,
+                                       to: newStatus)
+            }
         } catch {
             throw CardMoveError.moveFailed(error.localizedDescription)
         }
@@ -98,9 +106,10 @@ final class CardMover {
     }
 
     private func appendHistoryEntry(for card: Card,
-                                    destination: CardStatus) throws {
-        let entry = Self.historyEntry(from: card.status,
-                                      to: destination,
+                                    from sourceStatus: CardStatus,
+                                    to destinationStatus: CardStatus) throws {
+        let entry = Self.historyEntry(from: sourceStatus,
+                                      to: destinationStatus,
                                       dateProvider: dateProvider)
 
         let writer = CardMarkdownWriter(parser: CardFileParser(), fileManager: fileManager)

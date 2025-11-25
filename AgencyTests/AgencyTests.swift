@@ -202,6 +202,40 @@ struct AgencyTests {
     }
 
     @MainActor
+    @Test func moverDoesNotAppendHistoryWhenMoveFails() async throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let projectURL = tempRoot.appendingPathComponent(ProjectConventions.projectRootName, isDirectory: true)
+        let phaseURL = projectURL.appendingPathComponent("phase-0-alpha", isDirectory: true)
+        try makePhaseDirectories(at: phaseURL, fileManager: fileManager)
+
+        let sourceURL = phaseURL.appendingPathComponent("backlog/0.5-demo.md")
+        let contents = richCardContents(code: "0.5", slug: "demo", historyEntry: "2025-01-01 - Seeded history.")
+        try contents.write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        // Remove destination to force failure.
+        try fileManager.removeItem(at: phaseURL.appendingPathComponent("in-progress"))
+
+        let card = try CardFileParser().parse(fileURL: sourceURL, contents: contents)
+        let mover = CardMover(fileManager: fileManager)
+
+        do {
+            try await mover.move(card: card, to: .inProgress, rootURL: tempRoot, logHistoryEntry: true)
+            Issue.record("Move should have thrown when destination is missing.")
+        } catch let error as CardMoveError {
+            #expect(error == .destinationFolderMissing(.inProgress))
+            let persisted = try String(contentsOf: sourceURL, encoding: .utf8)
+            let parsed = try CardFileParser().parse(fileURL: sourceURL, contents: persisted)
+            #expect(parsed.history == ["2025-01-01 - Seeded history."])
+        } catch {
+            Issue.record("Unexpected error type: \(error)")
+        }
+    }
+
+    @MainActor
     @Test func inspectorDraftMirrorsParsedCard() async throws {
         let fileManager = FileManager.default
         let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
