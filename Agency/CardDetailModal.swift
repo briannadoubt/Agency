@@ -56,6 +56,26 @@ struct CardDetailModal: View {
 
     private let pipeline = CardEditingPipeline.shared
 
+    private var hasUnsavedChanges: Bool {
+        guard let snapshot else { return false }
+
+        if pendingRawSnapshot != nil {
+            return true
+        }
+
+        switch mode {
+        case .raw:
+            let mergedRaw = appendHistoryIfNeeded(to: rawDraft)
+            return mergedRaw != snapshot.contents
+        case .view, .form:
+            let rendered = CardMarkdownWriter().renderMarkdown(from: formDraft,
+                                                               basedOn: snapshot.card,
+                                                               existingContents: snapshot.contents,
+                                                               appendHistory: appendHistory)
+            return rendered != snapshot.contents
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -161,7 +181,7 @@ struct CardDetailModal: View {
     private var content: some View {
         switch mode {
         case .view:
-            CardViewMode(formDraft: formDraft, phase: phase)
+            CardViewMode(formDraft: $formDraft, phase: phase)
         case .form:
             CardFormMode(formDraft: $formDraft)
         case .raw:
@@ -175,30 +195,37 @@ struct CardDetailModal: View {
             HStack(spacing: DesignTokens.Spacing.small) {
                 if mode == .view {
                     Button {
+                        resetDraftsFromSnapshot()
+                    } label: {
+                        Label("Revert Changes", systemImage: "arrow.uturn.backward")
+                    }
+                    .disabled(!hasUnsavedChanges)
+
+                    Button {
                         mode = .form
                     } label: {
-                        Label("Edit", systemImage: "pencil")
+                        Label("Open Form", systemImage: "slider.horizontal.3")
                     }
-                    .keyboardShortcut(.defaultAction)
                 } else {
                     Button("Cancel") {
                         resetDraftsFromSnapshot()
                         mode = .view
                     }
                     .keyboardShortcut(.cancelAction)
-
-                    Button {
-                        Task { await save() }
-                    } label: {
-                        if isSaving {
-                            ProgressView()
-                        } else {
-                            Label("Save", systemImage: "tray.and.arrow.down")
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isSaving)
                 }
+
+                Button {
+                    Task { await save() }
+                } label: {
+                    if isSaving {
+                        ProgressView()
+                    } else {
+                        Label("Save", systemImage: "tray.and.arrow.down")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(isSaving || !hasUnsavedChanges)
 
                 Spacer()
 
@@ -274,6 +301,7 @@ struct CardDetailModal: View {
         formDraft = CardDetailFormDraft.from(card: snapshot.card)
         rawDraft = snapshot.contents
         pendingRawSnapshot = nil
+        appendHistory = false
     }
 
     private func appendHistoryIfNeeded(to raw: String) -> String {
@@ -325,13 +353,17 @@ struct CardDetailModal: View {
     @MainActor
     private func save() async {
         guard let snapshot else { return }
+        guard hasUnsavedChanges else {
+            mode = .view
+            return
+        }
         isSaving = true
         defer { isSaving = false }
 
         do {
             let updated: CardDocumentSnapshot
             switch mode {
-            case .form:
+            case .form, .view:
                 let mergeBaseline = pendingRawSnapshot ?? snapshot
                 let merged = CardMarkdownWriter().renderMarkdown(from: formDraft,
                                                                   basedOn: mergeBaseline.card,
@@ -342,11 +374,8 @@ struct CardDetailModal: View {
                 // original snapshot for conflict detection.
                 updated = try pipeline.saveRaw(merged, snapshot: snapshot)
             case .raw:
-                // TODO(Phase2): Enforce schema validation before raw saves when collaborative editing lands.
                 let mergedRaw = appendHistoryIfNeeded(to: rawDraft)
                 updated = try pipeline.saveRaw(mergedRaw, snapshot: snapshot)
-            case .view:
-                return
             }
 
             self.snapshot = updated
@@ -364,7 +393,7 @@ struct CardDetailModal: View {
 }
 
 private struct CardViewMode: View {
-    let formDraft: CardDetailFormDraft
+    @Binding var formDraft: CardDetailFormDraft
     let phase: Phase
 
     @Environment(\.colorScheme) private var colorScheme
@@ -373,9 +402,9 @@ private struct CardViewMode: View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.large) {
                 MetadataGrid(formDraft: formDraft, phase: phase)
-                SummaryBlock(summary: formDraft.summary)
-                CriteriaList(criteria: formDraft.criteria, accentColor: accentColor)
-                NotesBlock(notes: formDraft.notes, accentColor: accentColor)
+                SummaryBlock(summary: $formDraft.summary)
+                CriteriaList(criteria: $formDraft.criteria, accentColor: accentColor)
+                NotesBlock(notes: $formDraft.notes, accentColor: accentColor)
                 AttachmentsCommentsBlock()
                 HistoryTimeline(history: formDraft.history, accentColor: accentColor)
             }
@@ -582,23 +611,17 @@ private struct MetadataGrid: View {
 }
 
 private struct SummaryBlock: View {
-    let summary: String
+    @Binding var summary: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
-            Text("Summary")
-                .font(DesignTokens.Typography.headline)
-            Text(summary.isEmpty ? "No summary provided." : summary)
-                .font(DesignTokens.Typography.body)
-                .foregroundStyle(summary.isEmpty ? DesignTokens.Colors.textMuted : DesignTokens.Colors.textPrimary)
-        }
-        .padding()
-        .surfaceStyle(DesignTokens.Surfaces.card())
+        EditableTextCard(title: "Summary",
+                         placeholder: "Add a concise summary…",
+                         text: $summary)
     }
 }
 
 private struct CriteriaList: View {
-    let criteria: [CardDetailFormDraft.Criterion]
+    @Binding var criteria: [CardDetailFormDraft.Criterion]
     let accentColor: Color
 
     var body: some View {
@@ -610,18 +633,38 @@ private struct CriteriaList: View {
                 Text("No criteria yet.")
                     .foregroundStyle(DesignTokens.Colors.textSecondary)
             } else {
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.grid) {
-                    ForEach(criteria) { criterion in
-                        HStack(spacing: DesignTokens.Spacing.grid) {
-                            Image(systemName: criterion.isComplete ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(criterion.isComplete ? accentColor : DesignTokens.Colors.textSecondary)
-                            Text(criterion.title)
-                                .strikethrough(criterion.isComplete)
-                                .foregroundStyle(DesignTokens.Colors.textPrimary)
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+                    ForEach($criteria) { $criterion in
+                        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.small) {
+                            Toggle(isOn: $criterion.isComplete) {
+                                TextField("Criterion", text: $criterion.title)
+                                    .textFieldStyle(.plain)
+                            }
+                            .toggleStyle(.checkbox)
+                            .tint(accentColor)
+
+                            Spacer(minLength: DesignTokens.Spacing.small)
+
+                            Button {
+                                criteria.removeAll { $0.id == criterion.id }
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Delete criterion")
                         }
+                        .padding(.vertical, DesignTokens.Spacing.grid)
                     }
                 }
             }
+
+            Button {
+                criteria.append(.init(title: "New criterion", isComplete: false))
+            } label: {
+                Label("Add criterion", systemImage: "plus")
+            }
+            .buttonStyle(.borderless)
+            .padding(.top, DesignTokens.Spacing.small)
         }
         .padding()
         .surfaceStyle(DesignTokens.Surfaces.card())
@@ -629,20 +672,46 @@ private struct CriteriaList: View {
 }
 
 private struct NotesBlock: View {
-    let notes: String
+    @Binding var notes: String
     let accentColor: Color
 
     var body: some View {
+        EditableTextCard(title: "Notes",
+                         placeholder: "Capture notes, risks, and open questions…",
+                         text: $notes,
+                         accentFill: accentColor.opacity(0.08))
+    }
+}
+
+private struct EditableTextCard: View {
+    let title: String
+    let placeholder: String
+    @Binding var text: String
+    var accentFill: Color? = nil
+
+    var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
-            Text("Notes")
+            Text(title)
                 .font(DesignTokens.Typography.headline)
-            Text(notes.isEmpty ? "No notes yet." : notes)
-                .font(DesignTokens.Typography.body)
-                .foregroundStyle(notes.isEmpty ? DesignTokens.Colors.textSecondary : DesignTokens.Colors.textPrimary)
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.small)
-                    .fill(accentColor.opacity(0.1)))
+
+            ZStack(alignment: .topLeading) {
+                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(placeholder)
+                        .font(DesignTokens.Typography.body)
+                        .foregroundStyle(DesignTokens.Colors.textMuted)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                }
+
+                TextEditor(text: $text)
+                    .frame(minHeight: 140)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.small)
+                        .fill(accentFill ?? DesignTokens.Colors.card))
+                    .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.small)
+                        .stroke(DesignTokens.Colors.stroke, lineWidth: 1))
+            }
         }
         .padding()
         .surfaceStyle(DesignTokens.Surfaces.card())

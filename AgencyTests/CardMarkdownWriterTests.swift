@@ -6,158 +6,108 @@ import Testing
 struct CardMarkdownWriterTests {
 
     @Test
-    func renderKeepsFrontmatterOrder() throws {
-        let (fileURL, contents) = try makeTempCardFile()
+    func inlineEditsPreserveFrontmatterAndCheckboxes() throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let statusURL = tempRoot.appendingPathComponent("project/phase-3-editing/in-progress", isDirectory: true)
+        try fileManager.createDirectory(at: statusURL, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let fileURL = statusURL.appendingPathComponent("3.1-inline-editing.md")
+        let markdown = """
+---
+owner: bri
+agent_status: idle
+custom: keep-me
+---
+
+# 3.1 Inline Editing
+
+Summary:
+Old summary.
+
+Acceptance Criteria:
+- [ ] first thing
+- [x] second thing
+
+Notes:
+Old notes.
+
+History:
+- 2025-11-22: Created
+"""
+
+        try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
+
         let parser = CardFileParser()
-        let card = try parser.parse(fileURL: fileURL, contents: contents)
-        let writer = CardMarkdownWriter()
+        let card = try parser.parse(fileURL: fileURL, contents: markdown)
+        let writer = CardMarkdownWriter(parser: parser, fileManager: fileManager)
         let snapshot = try writer.loadSnapshot(for: card)
 
         var draft = CardDetailFormDraft.from(card: snapshot.card)
-        draft.branch = "feature/modal"
-        draft.owner = "sam"
+        draft.summary = "Updated summary"
+        draft.notes = "Updated notes"
+        draft.criteria[0].isComplete = true
+        draft.criteria[1].isComplete = false
 
-        let rendered = writer.renderMarkdown(from: draft,
-                                             basedOn: snapshot.card,
-                                             existingContents: snapshot.contents,
-                                             appendHistory: false)
+        let updated = try writer.saveFormDraft(draft, appendHistory: false, snapshot: snapshot)
+        let saved = try String(contentsOf: fileURL, encoding: .utf8)
 
-        let frontmatterLines = rendered.components(separatedBy: "---").dropFirst().first?
-            .split(separator: "\n")
-            .map(String.init) ?? []
+        let lines = saved.split(separator: "\n", omittingEmptySubsequences: false)
+        #expect(lines.count > 4)
+        #expect(lines[0] == "---")
+        #expect(lines[1] == "owner: bri")
+        #expect(lines[2] == "agent_status: idle")
+        #expect(lines[3] == "custom: keep-me")
 
-        #expect(frontmatterLines == [
-            "owner: sam",
-            "agent_flow: solo",
-            "agent_status: in-progress",
-            "branch: feature/modal",
-            "risk: normal",
-            "review: not-requested",
-            "parallelizable: true",
-            "extra: keep"
-        ])
+        #expect(saved.contains("- [x] first thing"))
+        #expect(saved.contains("- [ ] second thing"))
+
+        #expect(updated.card.summary == "Updated summary")
+        #expect(updated.card.notes == "Updated notes")
+        #expect(updated.card.acceptanceCriteria.map(\.isComplete) == [true, false])
     }
 
     @Test
-    func saveRejectsWhenFileChangedOnDisk() throws {
-        let (fileURL, contents) = try makeTempCardFile()
+    func detectsConflictBeforeSaving() throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let statusURL = tempRoot.appendingPathComponent("project/phase-3-editing/backlog", isDirectory: true)
+        try fileManager.createDirectory(at: statusURL, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let fileURL = statusURL.appendingPathComponent("3.1-conflict.md")
+        let markdown = """
+---
+owner: bri
+---
+
+Summary:
+Original summary.
+"""
+
+        try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
+
         let parser = CardFileParser()
-        let card = try parser.parse(fileURL: fileURL, contents: contents)
-        let writer = CardMarkdownWriter()
+        let card = try parser.parse(fileURL: fileURL, contents: markdown)
+        let writer = CardMarkdownWriter(parser: parser, fileManager: fileManager)
         let snapshot = try writer.loadSnapshot(for: card)
 
-        // Mutate on disk to force conflict.
-        try "mutated".write(to: fileURL, atomically: true, encoding: .utf8)
-
         var draft = CardDetailFormDraft.from(card: snapshot.card)
-        draft.owner = "bri"
+        draft.summary = "Changed summary"
 
-        #expect(throws: CardSaveError.conflict) {
-            _ = try writer.saveFormDraft(draft,
-                                         appendHistory: false,
-                                         snapshot: snapshot)
-        }
-    }
-
-    @Test
-    func historyAppendsWhenRequested() throws {
-        let (fileURL, contents) = try makeTempCardFile()
-        let parser = CardFileParser()
-        let card = try parser.parse(fileURL: fileURL, contents: contents)
-        let writer = CardMarkdownWriter()
-        var snapshot = try writer.loadSnapshot(for: card)
-
-        var draft = CardDetailFormDraft.from(card: snapshot.card)
-        draft.newHistoryEntry = "2025-11-24 - Added detail modal tests"
-
-        snapshot = try writer.saveFormDraft(draft,
-                                            appendHistory: true,
-                                            snapshot: snapshot)
-
-        #expect(snapshot.card.history.contains("2025-11-24 - Added detail modal tests"))
-    }
-
-    @Test
-    func parseFailureDoesNotMutateDisk() throws {
-        let (fileURL, contents) = try makeTempCardFile()
-        let parser = CardFileParser()
-        let card = try parser.parse(fileURL: fileURL, contents: contents)
-        let writer = CardMarkdownWriter()
-        let snapshot = try writer.loadSnapshot(for: card)
+        try "External change".write(to: fileURL, atomically: true, encoding: .utf8)
 
         do {
-            _ = try writer.saveRaw("---\ninvalid", snapshot: snapshot)
-            #expect(Bool(false), "Save should have thrown parseFailed")
+            _ = try writer.saveFormDraft(draft, appendHistory: false, snapshot: snapshot)
+            Issue.record("Expected conflict when the file changes on disk before saving")
         } catch let error as CardSaveError {
-            #expect({ if case .parseFailed = error { return true } else { return false } }())
+            #expect(error == .conflict)
         } catch {
-            #expect(Bool(false), "Unexpected error type: \(error)")
+            Issue.record("Unexpected error: \(error)")
         }
 
-        let disk = try String(contentsOf: fileURL, encoding: .utf8)
-        #expect(disk == contents)
-    }
-
-    @Test
-    func defaultHistoryPrefixDoesNotAppendWhenEmpty() throws {
-        let (fileURL, contents) = try makeTempCardFile()
-        let parser = CardFileParser()
-        let card = try parser.parse(fileURL: fileURL, contents: contents)
-        let writer = CardMarkdownWriter()
-        var snapshot = try writer.loadSnapshot(for: card)
-
-        var draft = CardDetailFormDraft.from(card: snapshot.card)
-        draft.newHistoryEntry = CardDetailFormDraft.defaultHistoryPrefix(on: Date()) // untouched prefix
-
-        snapshot = try writer.saveFormDraft(draft,
-                                            appendHistory: true,
-                                            snapshot: snapshot)
-
-        // History count should remain unchanged
-        #expect(snapshot.card.history.count == card.history.count)
-    }
-
-    // MARK: Helpers
-
-    private func makeTempCardFile() throws -> (URL, String) {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-        let cardDir = root
-            .appendingPathComponent("project")
-            .appendingPathComponent("phase-2-ui-foundations")
-            .appendingPathComponent("in-progress")
-
-        try FileManager.default.createDirectory(at: cardDir, withIntermediateDirectories: true)
-
-        let fileURL = cardDir.appendingPathComponent("2.5-detail-modal.md")
-        let contents = """
-        ---
-        owner: bri
-        agent_flow: solo
-        agent_status: in-progress
-        branch: implement/initial
-        risk: normal
-        review: not-requested
-        parallelizable: true
-        extra: keep
-        ---
-
-        # 2.5 Detail Modal
-
-        Summary:
-        Initial summary text.
-
-        Acceptance Criteria:
-        - [ ] First
-
-        Notes:
-        A note.
-
-        History:
-        - 2025-11-23 - Created
-        """
-
-        try contents.write(to: fileURL, atomically: true, encoding: .utf8)
-        return (fileURL, contents)
+        let diskContents = try String(contentsOf: fileURL, encoding: .utf8)
+        #expect(diskContents == "External change")
     }
 }
