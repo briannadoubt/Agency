@@ -34,6 +34,7 @@ struct CardPresentation: Equatable {
     let riskLevel: RiskLevel
     let completedCriteria: Int
     let totalCriteria: Int
+    let criteria: [AcceptanceCriterion]
 
     init(card: Card) {
         code = card.code
@@ -46,5 +47,6 @@ struct CardPresentation: Equatable {
         riskLevel = RiskLevel(rawValue: card.frontmatter.risk)
         completedCriteria = card.acceptanceCriteria.filter(\.isComplete).count
         totalCriteria = card.acceptanceCriteria.count
+        criteria = card.acceptanceCriteria
     }
 }

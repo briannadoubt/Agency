@@ -114,10 +114,14 @@ private struct DetailView: View {
                         ProjectSummary(snapshot: snapshot)
 
                         if let phase = selectedPhase(from: snapshot) {
-                            PhaseDetail(phase: phase) { card, status in
-                                await loader.moveCard(card, to: status)
-                            }
-                            .id(phase.phase.number)
+                            PhaseDetail(phase: phase,
+                                       onMove: { card, status in
+                                           await loader.moveCard(card, to: status)
+                                       },
+                                       onToggleCriterion: { card, index in
+                                           await loader.toggleAcceptanceCriterion(card, index: index)
+                                       })
+                                .id(phase.phase.number)
                         } else {
                             Text("Select a phase to see its cards.")
                                 .foregroundStyle(DesignTokens.Colors.textSecondary)
@@ -257,10 +261,12 @@ private struct ValidationIssuesView: View {
 private struct PhaseDetail: View {
     let phase: PhaseSnapshot
     let onMove: (Card, CardStatus) async -> Result<Void, CardMoveError>
+    let onToggleCriterion: (Card, Int) async -> Result<Void, Error>
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var draggingCardPath: String?
     @State private var moveError: CardMoveError?
+    @State private var editError: String?
     @State private var selectedCardPath: String?
     @State private var isShowingDetailModal = false
 
@@ -288,9 +294,9 @@ private struct PhaseDetail: View {
                         selectedCardPath: $selectedCardPath,
                         onMove: handleMove,
                         onSelect: handleSelect,
+                        onToggleCriterion: handleToggleCriterion,
                         reduceMotion: reduceMotion)
                 .frame(minHeight: DesignTokens.Layout.boardMinimumHeight)
-                // TODO(Phase2): Feed board updates from live editing feeds once data plumbing lands.
 
         }
         .alert("Move failed", isPresented: Binding(get: { moveError != nil },
@@ -302,6 +308,15 @@ private struct PhaseDetail: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(moveError?.localizedDescription ?? "Unknown error.")
+                .foregroundStyle(DesignTokens.Colors.textPrimary)
+        }
+        .alert("Update failed", isPresented: Binding(get: { editError != nil },
+                                                    set: { newValue in
+                                                        if !newValue { editError = nil }
+                                                    })) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(editError ?? "Unknown error.")
                 .foregroundStyle(DesignTokens.Colors.textPrimary)
         }
         .sheet(isPresented: $isShowingDetailModal) {
@@ -360,6 +375,17 @@ private struct PhaseDetail: View {
         selectedCardPath = path
         isShowingDetailModal = true
     }
+
+    private func handleToggleCriterion(_ card: Card, index: Int) {
+        Task {
+            let result = await onToggleCriterion(card, index)
+            await MainActor.run {
+                if case .failure(let error) = result {
+                    editError = error.localizedDescription
+                }
+            }
+        }
+    }
 }
 
 private struct KanbanBoard: View {
@@ -368,6 +394,7 @@ private struct KanbanBoard: View {
     @Binding var selectedCardPath: String?
     let onMove: (String, CardStatus) -> Void
     let onSelect: (Card) -> Void
+    let onToggleCriterion: (Card, Int) -> Void
     let reduceMotion: Bool
 
     @FocusState private var focusedCardPath: String?
@@ -384,6 +411,7 @@ private struct KanbanBoard: View {
                                  selectedCardPath: $selectedCardPath,
                                  onMove: onMove,
                                  onSelect: onSelect,
+                                 onToggleCriterion: onToggleCriterion,
                                  focusedCardPath: $focusedCardPath,
                                  reduceMotion: reduceMotion)
                         .frame(width: DesignTokens.Layout.boardColumnWidth)
@@ -409,6 +437,7 @@ private struct KanbanColumn: View {
     @Binding var selectedCardPath: String?
     let onMove: (String, CardStatus) -> Void
     let onSelect: (Card) -> Void
+    let onToggleCriterion: (Card, Int) -> Void
     let focusedCardPath: FocusState<String?>.Binding
     let reduceMotion: Bool
 
@@ -447,7 +476,8 @@ private struct KanbanColumn: View {
                                          isGhosted: draggingCardPath == cardPath,
                                          isSelected: selectedCardPath == cardPath,
                                          isFocused: isFocused,
-                                         reduceMotion: reduceMotion)
+                                         reduceMotion: reduceMotion,
+                                         onToggleCriterion: onToggleCriterion)
                             }
                             .buttonStyle(.plain)
                             .focused(focusedCardPath, equals: cardPath)
@@ -458,7 +488,8 @@ private struct KanbanColumn: View {
                                          isGhosted: true,
                                          isSelected: false,
                                          isFocused: false,
-                                         reduceMotion: reduceMotion)
+                                         reduceMotion: reduceMotion,
+                                         onToggleCriterion: onToggleCriterion)
                             }
                             .dropDestination(for: CardDragItem.self) { items, _ in
                                 guard let item = items.first else { return false }
@@ -567,6 +598,7 @@ private struct CardTile: View {
     let isSelected: Bool
     let isFocused: Bool
     let reduceMotion: Bool
+    let onToggleCriterion: (Card, Int) -> Void
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -609,6 +641,16 @@ private struct CardTile: View {
                 ProgressView(value: Double(presentation.completedCriteria), total: Double(presentation.totalCriteria))
                     .progressViewStyle(.linear)
                     .tint(accentColor)
+                    .contextMenu {
+                        ForEach(Array(presentation.criteria.enumerated()), id: \.offset) { index, criterion in
+                            Button {
+                                onToggleCriterion(card, index)
+                            } label: {
+                                Label(criterion.title,
+                                      systemImage: criterion.isComplete ? "checkmark.circle.fill" : "circle")
+                            }
+                        }
+                    }
             }
         }
         .padding(padding)

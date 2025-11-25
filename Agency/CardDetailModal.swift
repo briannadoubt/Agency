@@ -54,7 +54,7 @@ struct CardDetailModal: View {
     @State private var appendHistory = false
     @State private var skipRawRefreshOnce = false
 
-    private let writer = CardMarkdownWriter()
+    private let pipeline = CardEditingPipeline.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -216,7 +216,7 @@ struct CardDetailModal: View {
 
     private func loadSnapshot() async {
         do {
-            let loaded = try writer.loadSnapshot(for: card)
+            let loaded = try pipeline.loadSnapshot(for: card)
             await MainActor.run {
                 snapshot = loaded
                 pendingRawSnapshot = nil
@@ -244,23 +244,23 @@ struct CardDetailModal: View {
             let baseline = pendingRawSnapshot ?? snapshot
             guard let baseline else { return }
 
-            rawDraft = writer.renderMarkdown(from: formDraft,
-                                             basedOn: baseline.card,
-                                             existingContents: baseline.contents,
-                                             appendHistory: false)
+            rawDraft = CardMarkdownWriter().renderMarkdown(from: formDraft,
+                                                           basedOn: baseline.card,
+                                                           existingContents: baseline.contents,
+                                                           appendHistory: false)
         }
 
         if old == .raw && (new == .form || new == .view) {
             do {
                 let priorHistoryEntry = formDraft.newHistoryEntry
-                let parsedCard = try writer.formDraft(fromRaw: rawDraft, fileURL: snapshot!.card.filePath)
+                let parsedCard = try CardMarkdownWriter().formDraft(fromRaw: rawDraft, fileURL: snapshot!.card.filePath)
                 // Preserve transient fields not represented in markdown.
                 formDraft = parsedCard
                 formDraft.newHistoryEntry = priorHistoryEntry
                 let parsed = try CardFileParser().parse(fileURL: snapshot!.card.filePath, contents: rawDraft)
                 pendingRawSnapshot = CardDocumentSnapshot(card: parsed,
-                                                           contents: rawDraft,
-                                                           modifiedAt: snapshot!.modifiedAt)
+                                                          contents: rawDraft,
+                                                          modifiedAt: snapshot!.modifiedAt)
             } catch {
                 errorMessage = error.localizedDescription
                 mode = .raw
@@ -334,15 +334,17 @@ struct CardDetailModal: View {
             case .form:
                 // TODO(Phase2): Route form saves through shared editing pipeline once the Phase 2 editor is available.
                 let mergeBaseline = pendingRawSnapshot ?? snapshot
-                let merged = writer.renderMarkdown(from: formDraft,
-                                                   basedOn: mergeBaseline.card,
-                                                   existingContents: mergeBaseline.contents,
-                                                   appendHistory: appendHistory)
-                updated = try writer.saveMergedContents(merged, snapshot: snapshot)
+                _ = CardMarkdownWriter().renderMarkdown(from: formDraft,
+                                                        basedOn: mergeBaseline.card,
+                                                        existingContents: mergeBaseline.contents,
+                                                        appendHistory: appendHistory)
+                updated = try pipeline.saveFormDraft(formDraft,
+                                                     appendHistory: appendHistory,
+                                                     snapshot: snapshot)
             case .raw:
                 // TODO(Phase2): Enforce schema validation before raw saves when collaborative editing lands.
                 let mergedRaw = appendHistoryIfNeeded(to: rawDraft)
-                updated = try writer.saveRaw(mergedRaw, snapshot: snapshot)
+                updated = try pipeline.saveRaw(mergedRaw, snapshot: snapshot)
             case .view:
                 return
             }
@@ -374,6 +376,7 @@ private struct CardViewMode: View {
                 SummaryBlock(summary: formDraft.summary)
                 CriteriaList(criteria: formDraft.criteria, accentColor: accentColor)
                 NotesBlock(notes: formDraft.notes, accentColor: accentColor)
+                AttachmentsCommentsBlock()
                 HistoryTimeline(history: formDraft.history, accentColor: accentColor)
             }
         }
@@ -673,6 +676,34 @@ private struct HistoryTimeline: View {
                     }
                 }
             }
+        }
+        .padding()
+        .surfaceStyle(DesignTokens.Surfaces.card())
+    }
+}
+
+private struct AttachmentsCommentsBlock: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+            Text("Attachments & Comments")
+                .font(DesignTokens.Typography.headline)
+
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.grid) {
+                Label("No attachments yet", systemImage: "paperclip")
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                Label("No comments yet", systemImage: "text.bubble")
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.small)
+                .fill(DesignTokens.Colors.surface))
+            .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.small)
+                .stroke(DesignTokens.Colors.strokeMuted, lineWidth: 1))
+
+            Text("Coming soon: upload files and thread comments when the shared editor lands.")
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Colors.textMuted)
         }
         .padding()
         .surfaceStyle(DesignTokens.Surfaces.card())
