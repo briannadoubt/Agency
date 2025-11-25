@@ -369,6 +369,8 @@ private struct KanbanBoard: View {
     let onSelect: (Card) -> Void
     let reduceMotion: Bool
 
+    @FocusState private var focusedCardPath: String?
+
     var body: some View {
         let boardAnimation: Animation? = reduceMotion ? nil : DesignTokens.Motion.board
 
@@ -381,6 +383,7 @@ private struct KanbanBoard: View {
                                  selectedCardPath: $selectedCardPath,
                                  onMove: onMove,
                                  onSelect: onSelect,
+                                 focusedCardPath: $focusedCardPath,
                                  reduceMotion: reduceMotion)
                         .frame(width: DesignTokens.Layout.boardColumnWidth)
                 }
@@ -405,6 +408,7 @@ private struct KanbanColumn: View {
     @Binding var selectedCardPath: String?
     let onMove: (String, CardStatus) -> Void
     let onSelect: (Card) -> Void
+    let focusedCardPath: FocusState<String?>.Binding
     let reduceMotion: Bool
 
     @State private var isTargeted: Bool = false
@@ -430,31 +434,38 @@ private struct KanbanColumn: View {
                         ForEach(cards, id: \.filePath) { card in
                             let presentation = CardPresentation(card: card)
                             let cardPath = card.filePath.standardizedFileURL.path
+                            let isFocused = focusedCardPath.wrappedValue == cardPath
 
-                            CardTile(card: card,
-                                     presentation: presentation,
-                                     isGhosted: draggingCardPath == cardPath,
-                                     isSelected: selectedCardPath == cardPath,
-                                     reduceMotion: reduceMotion)
-                                .onTapGesture {
-                                    selectedCardPath = cardPath
-                                    onSelect(card)
-                                }
-                                .draggable(CardDragItem(path: card.filePath.standardizedFileURL.path)) {
-                                    CardTile(card: card,
-                                             presentation: presentation,
-                                             isGhosted: true,
-                                             isSelected: false,
-                                             reduceMotion: reduceMotion)
-                                }
-                                .dropDestination(for: CardDragItem.self) { items, _ in
-                                    guard let item = items.first else { return false }
-                                    draggingCardPath = item.path
-                                    onMove(item.path, status)
-                                    return true
-                                } isTargeted: { targeted in
-                                    isTargeted = targeted
-                                }
+                            Button {
+                                selectedCardPath = cardPath
+                                onSelect(card)
+                            } label: {
+                                CardTile(card: card,
+                                         presentation: presentation,
+                                         isGhosted: draggingCardPath == cardPath,
+                                         isSelected: selectedCardPath == cardPath,
+                                         isFocused: isFocused,
+                                         reduceMotion: reduceMotion)
+                            }
+                            .buttonStyle(.plain)
+                            .focused(focusedCardPath, equals: cardPath)
+                            .focusable(true)
+                            .draggable(CardDragItem(path: card.filePath.standardizedFileURL.path)) {
+                                CardTile(card: card,
+                                         presentation: presentation,
+                                         isGhosted: true,
+                                         isSelected: false,
+                                         isFocused: false,
+                                         reduceMotion: reduceMotion)
+                            }
+                            .dropDestination(for: CardDragItem.self) { items, _ in
+                                guard let item = items.first else { return false }
+                                draggingCardPath = item.path
+                                onMove(item.path, status)
+                                return true
+                            } isTargeted: { targeted in
+                                isTargeted = targeted
+                            }
                         }
                     }
                 }
@@ -551,6 +562,7 @@ private struct CardTile: View {
     let presentation: CardPresentation
     let isGhosted: Bool
     let isSelected: Bool
+    let isFocused: Bool
     let reduceMotion: Bool
 
     @State private var isHovering = false
@@ -589,8 +601,8 @@ private struct CardTile: View {
         .padding(DesignTokens.Spacing.medium)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(shape.fill(backgroundColor))
-        .overlay(shape.stroke(borderColor, lineWidth: 1))
-        .tokenShadow(DesignTokens.Shadows.card)
+        .overlay(shape.stroke(borderColor, lineWidth: isFocused ? 2 : 1))
+        .tokenShadow(isFocused ? DesignTokens.Shadows.focus : DesignTokens.Shadows.card)
         .opacity(isGhosted ? 0.8 : 1)
         .onHover { hovering in
             if reduceMotion {
@@ -610,6 +622,7 @@ private struct CardTile: View {
     }
 
     private var borderColor: Color {
+        if isFocused { return DesignTokens.Colors.accent }
         if isGhosted { return DesignTokens.Colors.accent }
         if isSelected { return DesignTokens.Colors.accent.opacity(0.8) }
         return isHovering ? DesignTokens.Colors.stroke : DesignTokens.Colors.strokeMuted
