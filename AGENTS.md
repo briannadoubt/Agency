@@ -8,6 +8,9 @@
 - Planning: Markdown cards in `project/phase-*/{backlog,in-progress,done}/`; follow `PROJECT_WORKFLOW.md`. XPC design: `project/XPC_ARCHITECTURE.md` (Phase 5).
 - Source code inside of the `Agency/` folder is referenced by said `Agency/` directory so the filesystem is synced with Xcode and Xcode doesn't need to understand membership of each and every file.
 
+## Review instructions
+Always check the name of the branch and make sure that all the acceptance criteria is completed. If the AC is 
+
 ## Task Execution Workflow (agent default)
 - Open `PROJECT_WORKFLOW.md` before acting; required step list.
 - Backlog sequencing is numeric: always work on the card whose filename in `project/**/backlog/` has the lowest leading numeral. If that card is already in `in-progress/`, finish it (move to `done/`) before selecting the next numeral. See `project/phase-1-core-shared-layer/README.md` for per-phase reminders.
