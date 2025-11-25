@@ -28,6 +28,7 @@ enum CardParsingError: Error {
     case invalidFilename(String)
     case statusNotFound(URL)
     case missingFrontmatterDelimiters(URL)
+    case invalidFrontmatterLine(String, URL)
 }
 
 struct FrontmatterEntry: Equatable {
@@ -173,13 +174,18 @@ struct CardFileParser {
     private func splitFrontmatter(from contents: String, fileURL: URL) throws -> ([FrontmatterEntry], String) {
         let lines = contents.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 
-        guard let start = lines.firstIndex(of: "---"),
-              let end = lines[(start + 1)...].firstIndex(of: "---"),
+        guard let start = lines.firstIndex(of: "---") else {
+            // No frontmatter; treat the full document as the body.
+            return ([], contents)
+        }
+
+        guard let end = lines[(start + 1)...].firstIndex(of: "---"),
               start == 0 else {
             throw CardParsingError.missingFrontmatterDelimiters(fileURL)
         }
 
         let frontmatterLines = Array(lines[(start + 1)..<end])
+        try validateFrontmatter(frontmatterLines, fileURL: fileURL)
         let bodyLines = Array(lines[(end + 1)...])
         let entries = frontmatterLines.compactMap(FrontmatterEntry.init(line:))
         let body = bodyLines.joined(separator: "\n")
@@ -260,6 +266,22 @@ struct CardFileParser {
             }
     }
 
+    private func validateFrontmatter(_ lines: [String], fileURL: URL) throws {
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+
+            guard let separator = line.firstIndex(of: ":") else {
+                throw CardParsingError.invalidFrontmatterLine(line, fileURL)
+            }
+
+            let key = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
+            if key.isEmpty {
+                throw CardParsingError.invalidFrontmatterLine(line, fileURL)
+            }
+        }
+    }
+
     private func isSectionTitle(_ line: String) -> Bool {
         guard line.hasSuffix(":") else { return false }
         guard !line.hasPrefix("-") else { return false }
@@ -302,5 +324,20 @@ private extension Array where Element == String {
             lines.removeLast()
         }
         return lines.joined(separator: "\n")
+    }
+}
+
+extension CardParsingError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .invalidFilename(let name):
+            return "Invalid card filename: \(name). Expected <phase>.<task>-slug.md."
+        case .statusNotFound(let url):
+            return "Cannot determine card status from path: \(url.path)."
+        case .missingFrontmatterDelimiters(let url):
+            return "Frontmatter is missing starting/ending '---' in \(url.lastPathComponent)."
+        case .invalidFrontmatterLine(let line, let url):
+            return "Invalid frontmatter entry \"\(line)\" in \(url.lastPathComponent)."
+        }
     }
 }
