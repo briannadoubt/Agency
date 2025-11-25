@@ -149,6 +149,40 @@ Original summary.
     }
 
     @Test
+    func savesBodyEditsWithoutFrontmatter() throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let statusURL = tempRoot.appendingPathComponent("project/phase-3-editing/backlog", isDirectory: true)
+        try fileManager.createDirectory(at: statusURL, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let fileURL = statusURL.appendingPathComponent("3.4-frontmatterless.md")
+        let markdown = """
+        # 3.4 Frontmatterless
+
+        Summary:
+        Old summary.
+        """
+
+        try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let parser = CardFileParser()
+        let card = try parser.parse(fileURL: fileURL, contents: markdown)
+        let writer = CardMarkdownWriter(parser: parser, fileManager: fileManager)
+        let snapshot = try writer.loadSnapshot(for: card)
+
+        var draft = CardDetailFormDraft.from(card: snapshot.card)
+        draft.summary = "New summary."
+
+        let updated = try writer.saveFormDraft(draft, appendHistory: false, snapshot: snapshot)
+        let saved = try String(contentsOf: fileURL, encoding: .utf8)
+
+        #expect(!saved.hasPrefix("---"))
+        #expect(saved.contains("New summary."))
+        #expect(updated.card.summary == "New summary.")
+    }
+
+    @Test
     func rejectsInvalidFrontmatterBeforeSaving() throws {
         let fileManager = FileManager.default
         let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)

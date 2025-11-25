@@ -301,12 +301,14 @@ struct CardMarkdownWriter {
                          title: String,
                          sections: [CardSection],
                          fallbackOriginal: String) -> String {
-        guard !frontmatter.isEmpty else { return fallbackOriginal }
+        var lines: [String] = []
 
-        var lines: [String] = ["---"]
-        lines.append(contentsOf: frontmatter.map { "\($0.key): \($0.value)" })
-        lines.append("---")
-        lines.append("")
+        if !frontmatter.isEmpty {
+            lines.append("---")
+            lines.append(contentsOf: frontmatter.map { "\($0.key): \($0.value)" })
+            lines.append("---")
+            lines.append("")
+        }
 
         if !title.isEmpty {
             lines.append("# \(title)")
