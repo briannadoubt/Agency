@@ -332,15 +332,15 @@ struct CardDetailModal: View {
             let updated: CardDocumentSnapshot
             switch mode {
             case .form:
-                // TODO(Phase2): Route form saves through shared editing pipeline once the Phase 2 editor is available.
                 let mergeBaseline = pendingRawSnapshot ?? snapshot
-                _ = CardMarkdownWriter().renderMarkdown(from: formDraft,
-                                                        basedOn: mergeBaseline.card,
-                                                        existingContents: mergeBaseline.contents,
-                                                        appendHistory: appendHistory)
-                updated = try pipeline.saveFormDraft(formDraft,
-                                                     appendHistory: appendHistory,
-                                                     snapshot: snapshot)
+                let merged = CardMarkdownWriter().renderMarkdown(from: formDraft,
+                                                                  basedOn: mergeBaseline.card,
+                                                                  existingContents: mergeBaseline.contents,
+                                                                  appendHistory: appendHistory)
+
+                // Preserve pending raw edits by merging against the pending baseline, then write using the
+                // original snapshot for conflict detection.
+                updated = try pipeline.saveRaw(merged, snapshot: snapshot)
             case .raw:
                 // TODO(Phase2): Enforce schema validation before raw saves when collaborative editing lands.
                 let mergedRaw = appendHistoryIfNeeded(to: rawDraft)
