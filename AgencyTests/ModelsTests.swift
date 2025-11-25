@@ -126,4 +126,25 @@ struct ModelsTests {
         #expect(card.acceptanceCriteria[1].isComplete == true)
         #expect(card.acceptanceCriteria[2].isComplete == true)
     }
+
+    @Test func parsesCardsWithoutFrontmatter() throws {
+        let fileURL = URL(fileURLWithPath: "/tmp/project/phase-3-editing/backlog/3.4-frontmatterless.md")
+        let contents = """
+        # 3.4 Frontmatterless
+
+        Summary:
+        No frontmatter block yet.
+
+        Acceptance Criteria:
+        - [ ] Add frontmatter support
+        """
+
+        let card = try CardFileParser().parse(fileURL: fileURL, contents: contents)
+
+        #expect(card.frontmatter.orderedFields.isEmpty)
+        #expect(card.frontmatter.owner == nil)
+        #expect(card.title == "3.4 Frontmatterless")
+        #expect(card.section(named: "Summary")?.content == "No frontmatter block yet.")
+        #expect(card.acceptanceCriteria.count == 1)
+    }
 }

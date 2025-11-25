@@ -110,4 +110,91 @@ Original summary.
         let diskContents = try String(contentsOf: fileURL, encoding: .utf8)
         #expect(diskContents == "External change")
     }
+
+    @Test
+    func addsFrontmatterWhenMissing() throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let statusURL = tempRoot.appendingPathComponent("project/phase-3-editing/backlog", isDirectory: true)
+        try fileManager.createDirectory(at: statusURL, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let fileURL = statusURL.appendingPathComponent("3.4-frontmatterless.md")
+        let markdown = """
+        # 3.4 Frontmatterless
+
+        Summary:
+        No frontmatter yet.
+        """
+
+        try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let parser = CardFileParser()
+        let card = try parser.parse(fileURL: fileURL, contents: markdown)
+        let writer = CardMarkdownWriter(parser: parser, fileManager: fileManager)
+        let snapshot = try writer.loadSnapshot(for: card)
+
+        var draft = CardDetailFormDraft.from(card: snapshot.card)
+        draft.owner = "bri"
+        draft.risk = "medium"
+        draft.parallelizable = true
+
+        _ = try writer.saveFormDraft(draft, appendHistory: false, snapshot: snapshot)
+        let saved = try String(contentsOf: fileURL, encoding: .utf8)
+
+        #expect(saved.hasPrefix("---"))
+        #expect(saved.contains("owner: bri"))
+        #expect(saved.contains("risk: medium"))
+        #expect(saved.contains("parallelizable: true"))
+    }
+
+    @Test
+    func rejectsInvalidFrontmatterBeforeSaving() throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let statusURL = tempRoot.appendingPathComponent("project/phase-3-editing/backlog", isDirectory: true)
+        try fileManager.createDirectory(at: statusURL, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let fileURL = statusURL.appendingPathComponent("3.4-invalid-frontmatter.md")
+        let markdown = """
+        ---
+        owner: bri
+        ---
+
+        Summary:
+        Valid content.
+        """
+
+        try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let parser = CardFileParser()
+        let card = try parser.parse(fileURL: fileURL, contents: markdown)
+        let writer = CardMarkdownWriter(parser: parser, fileManager: fileManager)
+        let snapshot = try writer.loadSnapshot(for: card)
+
+        let invalid = """
+        ---
+        owner bri
+        ---
+
+        Summary:
+        Broken frontmatter.
+        """
+
+        do {
+            _ = try writer.saveRaw(invalid, snapshot: snapshot)
+            Issue.record("Expected parse failure before saving invalid YAML")
+        } catch let error as CardSaveError {
+            switch error {
+            case .parseFailed(let message):
+                #expect(message.contains("Invalid frontmatter entry"))
+            default:
+                Issue.record("Unexpected error: \(error)")
+            }
+        }
+
+        let disk = try String(contentsOf: fileURL, encoding: .utf8)
+        #expect(disk == markdown)
+    }
 }

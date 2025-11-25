@@ -26,6 +26,7 @@ struct CardDetailFormDraft: Equatable {
     var criteria: [Criterion]
     var history: [String]
     var newHistoryEntry: String
+    var hadFrontmatter: Bool
 
     static func from(card: Card, today: Date = .init()) -> CardDetailFormDraft {
         CardDetailFormDraft(title: card.title ?? "",
@@ -40,7 +41,8 @@ struct CardDetailFormDraft: Equatable {
                             notes: card.notes ?? "",
                             criteria: card.acceptanceCriteria.map { Criterion(title: $0.title, isComplete: $0.isComplete) },
                             history: card.history,
-                            newHistoryEntry: CardDetailFormDraft.defaultHistoryPrefix(on: today))
+                            newHistoryEntry: CardDetailFormDraft.defaultHistoryPrefix(on: today),
+                            hadFrontmatter: !card.frontmatter.orderedFields.isEmpty)
     }
 
     mutating func appendHistoryIfNeeded() {
@@ -194,6 +196,7 @@ struct CardMarkdownWriter {
 
     private func updatedFrontmatterEntries(original: [FrontmatterEntry], draft: CardDetailFormDraft) -> [FrontmatterEntry] {
         var entries = original
+        let hadFrontmatter = !original.isEmpty
 
         func upsert(key: String, value: String?) {
             if let index = entries.firstIndex(where: { $0.key == key }) {
@@ -215,7 +218,14 @@ struct CardMarkdownWriter {
         upsert(key: "branch", value: draft.branch.emptyToNil())
         upsert(key: "risk", value: draft.risk.emptyToNil())
         upsert(key: "review", value: draft.review.emptyToNil())
-        upsert(key: "parallelizable", value: boolValue)
+
+        let hadParallelizable = original.contains(where: { $0.key == "parallelizable" })
+        let shouldIncludeParallelizable = draft.parallelizable || hadFrontmatter || hadParallelizable
+        if shouldIncludeParallelizable {
+            upsert(key: "parallelizable", value: boolValue)
+        } else {
+            entries.removeAll { $0.key == "parallelizable" }
+        }
 
         return entries
     }

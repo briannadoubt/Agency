@@ -46,7 +46,8 @@ struct CardDetailModal: View {
                                                        notes: "",
                                                        criteria: [],
                                                        history: [],
-                                                       newHistoryEntry: CardDetailFormDraft.defaultHistoryPrefix(on: Date()))
+                                                       newHistoryEntry: CardDetailFormDraft.defaultHistoryPrefix(on: Date()),
+                                                       hadFrontmatter: false)
     @State private var rawDraft = ""
     @State private var isLoading = true
     @State private var isSaving = false
@@ -87,7 +88,15 @@ struct CardDetailModal: View {
                         .padding()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    content
+                    VStack(spacing: DesignTokens.Spacing.medium) {
+                        if let errorMessage {
+                            InlineErrorBanner(message: errorMessage) {
+                                self.errorMessage = nil
+                            }
+                        }
+
+                        content
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -104,13 +113,6 @@ struct CardDetailModal: View {
         }
         .onChange(of: mode) { oldValue, newValue in
             syncDraftsForModeChange(from: oldValue, to: newValue)
-        }
-        .alert("Problem", isPresented: Binding(get: { errorMessage != nil }, set: { value in
-            if !value { errorMessage = nil }
-        })) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text(errorMessage ?? "Unknown error")
         }
     }
 
@@ -245,6 +247,7 @@ struct CardDetailModal: View {
         do {
             let loaded = try pipeline.loadSnapshot(for: card)
             await MainActor.run {
+                errorMessage = nil
                 snapshot = loaded
                 pendingRawSnapshot = nil
                 formDraft = CardDetailFormDraft.from(card: loaded.card)
@@ -302,6 +305,7 @@ struct CardDetailModal: View {
         rawDraft = snapshot.contents
         pendingRawSnapshot = nil
         appendHistory = false
+        errorMessage = nil
     }
 
     private func appendHistoryIfNeeded(to raw: String) -> String {
@@ -383,6 +387,7 @@ struct CardDetailModal: View {
             formDraft = CardDetailFormDraft.from(card: updated.card)
             rawDraft = updated.contents
             appendHistory = false
+            errorMessage = nil
             mode = .view
         } catch let error as CardSaveError {
             errorMessage = error.localizedDescription
@@ -422,31 +427,8 @@ private struct CardFormMode: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.large) {
-                GroupBox(label: Label("Metadata", systemImage: "info.circle")) {
-                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
-                        TextField("Title", text: $formDraft.title)
-                            .textFieldStyle(.roundedBorder)
-
-                        HStack(spacing: DesignTokens.Spacing.medium) {
-                            TextField("Owner", text: $formDraft.owner)
-                            TextField("Branch", text: $formDraft.branch)
-                        }
-                        .textFieldStyle(.roundedBorder)
-
-                        HStack(spacing: DesignTokens.Spacing.medium) {
-                            TextField("Agent flow", text: $formDraft.agentFlow)
-                            TextField("Agent status", text: $formDraft.agentStatus)
-                        }
-                        .textFieldStyle(.roundedBorder)
-
-                        HStack(spacing: DesignTokens.Spacing.medium) {
-                            TextField("Risk", text: $formDraft.risk)
-                            TextField("Review", text: $formDraft.review)
-                        }
-                        .textFieldStyle(.roundedBorder)
-
-                        Toggle("Parallelizable", isOn: $formDraft.parallelizable)
-                    }
+                GroupBox(label: Label("Frontmatter", systemImage: "doc.text.magnifyingglass")) {
+                    FrontmatterEditor(formDraft: $formDraft)
                 }
 
                 GroupBox(label: Label("Summary", systemImage: "text.justify")) {
@@ -524,6 +506,146 @@ private struct CardFormMode: View {
     }
 }
 
+private struct FrontmatterEditor: View {
+    @Binding var formDraft: CardDetailFormDraft
+    @Environment(\.colorScheme) private var colorScheme
+
+    private let riskOptions = ["normal", "low", "medium", "high"]
+    private let reviewOptions = ["not-requested", "requested", "changes-requested", "approved", "passed"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
+            HStack(spacing: DesignTokens.Spacing.small) {
+                Image(systemName: frontmatterWillBeWritten ? "checkmark.seal.fill" : "plus.square.dashed")
+                    .foregroundStyle(frontmatterWillBeWritten ? DesignTokens.Colors.preferredAccent(for: colorScheme) : DesignTokens.Colors.textSecondary)
+                Text(frontmatterStatusText)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                Spacer()
+                Text("YAML is validated before saving.")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textMuted)
+            }
+
+            TextField("Title", text: $formDraft.title)
+                .textFieldStyle(.roundedBorder)
+
+            HStack(spacing: DesignTokens.Spacing.medium) {
+                TextField("Owner", text: $formDraft.owner)
+                TextField("Branch", text: $formDraft.branch)
+            }
+            .textFieldStyle(.roundedBorder)
+
+            HStack(spacing: DesignTokens.Spacing.medium) {
+                TextField("Agent flow", text: $formDraft.agentFlow)
+                TextField("Agent status", text: $formDraft.agentStatus)
+            }
+            .textFieldStyle(.roundedBorder)
+
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.grid) {
+                HStack(spacing: DesignTokens.Spacing.medium) {
+                    Picker("Risk", selection: riskSelection) {
+                        ForEach(riskOptions, id: \.self) { option in
+                            Text(riskLabel(for: option)).tag(option)
+                        }
+                        Text("Custom…").tag("custom")
+                    }
+                    .pickerStyle(.menu)
+
+                    Picker("Review", selection: reviewSelection) {
+                        ForEach(reviewOptions, id: \.self) { option in
+                            Text(reviewLabel(for: option)).tag(option)
+                        }
+                        Text("Custom…").tag("custom")
+                    }
+                    .pickerStyle(.menu)
+                }
+
+                if riskSelection.wrappedValue == "custom" {
+                    TextField("Custom risk (kept as-is)", text: $formDraft.risk)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                if reviewSelection.wrappedValue == "custom" {
+                    TextField("Custom review (kept as-is)", text: $formDraft.review)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+
+            Toggle("Parallelizable", isOn: $formDraft.parallelizable)
+                .toggleStyle(.switch)
+        }
+    }
+
+    private var frontmatterWillBeWritten: Bool {
+        formDraft.hadFrontmatter || hasFrontmatterFields
+    }
+
+    private var hasFrontmatterFields: Bool {
+        !formDraft.owner.isFrontmatterEmpty ||
+        !formDraft.agentFlow.isFrontmatterEmpty ||
+        !formDraft.agentStatus.isFrontmatterEmpty ||
+        !formDraft.branch.isFrontmatterEmpty ||
+        !formDraft.risk.isFrontmatterEmpty ||
+        !formDraft.review.isFrontmatterEmpty ||
+        formDraft.parallelizable
+    }
+
+    private var frontmatterStatusText: String {
+        if formDraft.hadFrontmatter {
+            return "Frontmatter detected; unknown keys stay ordered."
+        }
+        if hasFrontmatterFields {
+            return "No frontmatter found — block will be added on save."
+        }
+        return "No frontmatter yet; fill any field to add it."
+    }
+
+    private var riskSelection: Binding<String> {
+        Binding<String>(
+            get: {
+                let normalized = formDraft.risk.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                return riskOptions.contains(normalized) ? normalized : "custom"
+            },
+            set: { selection in
+                if selection == "custom" {
+                    if riskOptions.contains(formDraft.risk.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) {
+                        formDraft.risk = ""
+                    }
+                } else {
+                    formDraft.risk = selection
+                }
+            }
+        )
+    }
+
+    private var reviewSelection: Binding<String> {
+        Binding<String>(
+            get: {
+                let normalized = formDraft.review.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                return reviewOptions.contains(normalized) ? normalized : "custom"
+            },
+            set: { selection in
+                if selection == "custom" {
+                    if reviewOptions.contains(formDraft.review.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) {
+                        formDraft.review = ""
+                    }
+                } else {
+                    formDraft.review = selection
+                }
+            }
+        )
+    }
+
+    private func riskLabel(for value: String) -> String {
+        value.capitalized
+    }
+
+    private func reviewLabel(for value: String) -> String {
+        value.replacingOccurrences(of: "-", with: " ").capitalized
+    }
+}
+
 private struct CardRawMode: View {
     @Binding var rawText: String
 
@@ -551,6 +673,34 @@ private struct CardRawMode: View {
                     .stroke(DesignTokens.Colors.stroke, lineWidth: 1))
         }
         .padding(.vertical, DesignTokens.Spacing.large)
+    }
+}
+
+private struct InlineErrorBanner: View {
+    let message: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.small) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+            Text(message)
+                .font(DesignTokens.Typography.body)
+                .foregroundStyle(DesignTokens.Colors.textPrimary)
+            Spacer()
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.borderless)
+            .help("Dismiss")
+        }
+        .padding()
+        .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium)
+            .fill(DesignTokens.Colors.surfaceRaised))
+        .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium)
+            .stroke(DesignTokens.Colors.stroke, lineWidth: 1))
     }
 }
 
@@ -776,5 +926,11 @@ private struct AttachmentsCommentsBlock: View {
         }
         .padding()
         .surfaceStyle(DesignTokens.Surfaces.card())
+    }
+}
+
+private extension String {
+    var isFrontmatterEmpty: Bool {
+        trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
