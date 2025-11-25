@@ -7,6 +7,32 @@ enum CardStatus: String, CaseIterable {
     case done = "done"
 
     nonisolated var folderName: String { rawValue }
+
+    /// Human-readable label used for UI and history entries.
+    nonisolated var displayName: String {
+        switch self {
+        case .backlog:
+            return "Backlog"
+        case .inProgress:
+            return "In Progress"
+        case .done:
+            return "Done"
+        }
+    }
+
+    /// Linear workflow index used to validate transitions without skips.
+    nonisolated private var workflowIndex: Int {
+        switch self {
+        case .backlog: return 0
+        case .inProgress: return 1
+        case .done: return 2
+        }
+    }
+
+    /// Returns true when transitioning directly between adjacent workflow states.
+    nonisolated func canTransition(to status: CardStatus) -> Bool {
+        abs(workflowIndex - status.workflowIndex) <= 1
+    }
 }
 
 /// Describes a validation issue discovered while checking project conventions.

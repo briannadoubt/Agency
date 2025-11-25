@@ -115,8 +115,10 @@ private struct DetailView: View {
 
                         if let phase = selectedPhase(from: snapshot) {
                             PhaseDetail(phase: phase,
-                                       onMove: { card, status in
-                                           await loader.moveCard(card, to: status)
+                                       onMove: { card, status, logHistory in
+                                           await loader.moveCard(card,
+                                                                 to: status,
+                                                                 logHistoryEntry: logHistory)
                                        },
                                        onToggleCriterion: { card, index in
                                            await loader.toggleAcceptanceCriterion(card, index: index)
@@ -265,7 +267,7 @@ private struct ValidationIssuesView: View {
 
 private struct PhaseDetail: View {
     let phase: PhaseSnapshot
-    let onMove: (Card, CardStatus) async -> Result<Void, CardMoveError>
+    let onMove: (Card, CardStatus, Bool) async -> Result<Void, CardMoveError>
     let onToggleCriterion: (Card, Int) async -> Result<Void, Error>
     let onCreateCard: (String, Bool) async -> Result<Card, CardCreationError>
 
@@ -280,6 +282,7 @@ private struct PhaseDetail: View {
     @State private var newCardTitle = ""
     @State private var includeHistoryEntry = true
     @State private var isCreatingCard = false
+    @State private var logMovesToHistory = true
 
     private var cardsByPath: [String: Card] {
         Dictionary(uniqueKeysWithValues: phase.cards.map { ($0.filePath.standardizedFileURL.path, $0) })
@@ -312,6 +315,14 @@ private struct PhaseDetail: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
+
+            Toggle(isOn: $logMovesToHistory) {
+                Label("Log moves to History", systemImage: "clock.arrow.circlepath")
+                    .labelStyle(.titleAndIcon)
+            }
+            .toggleStyle(.switch)
+            .font(DesignTokens.Typography.caption)
+            .foregroundStyle(DesignTokens.Colors.textSecondary)
 
             KanbanBoard(phase: phase,
                         draggingCardPath: $draggingCardPath,
@@ -401,7 +412,7 @@ private struct PhaseDetail: View {
         }
 
         Task {
-            let result = await onMove(card, targetStatus)
+            let result = await onMove(card, targetStatus, logMovesToHistory)
             await MainActor.run {
                 draggingCardPath = nil
                 if case .failure(let error) = result {
