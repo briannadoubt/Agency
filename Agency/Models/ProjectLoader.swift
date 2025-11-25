@@ -23,6 +23,7 @@ final class ProjectLoader {
     private let fileManager: FileManager
     private let scanner: ProjectScanner
     private let cardMover: CardMover
+    private let cardCreator: CardCreator
     private let editor = CardEditingPipeline.shared
 
     private var watchTask: Task<Void, Never>?
@@ -35,13 +36,15 @@ final class ProjectLoader {
          watcher: ProjectScannerWatching = ProjectScannerWatcher(),
          fileManager: FileManager = .default,
          scanner: ProjectScanner = ProjectScanner(),
-         cardMover: CardMover = CardMover()) {
+         cardMover: CardMover = CardMover(),
+         cardCreator: CardCreator = CardCreator()) {
         self.bookmarkStore = bookmarkStore
         self.validator = validator
         self.watcher = watcher
         self.fileManager = fileManager
         self.scanner = scanner
         self.cardMover = cardMover
+        self.cardCreator = cardCreator
     }
 
     @MainActor deinit {
@@ -92,6 +95,24 @@ final class ProjectLoader {
             return .success(())
         } catch {
             return .failure(error)
+        }
+    }
+
+    func createCard(in phase: PhaseSnapshot,
+                    title: String,
+                    includeHistoryEntry: Bool = true) async -> Result<Card, CardCreationError> {
+        guard let snapshot = loadedSnapshot else { return .failure(.snapshotUnavailable) }
+
+        do {
+            let created = try await cardCreator.createCard(in: phase,
+                                                           title: title,
+                                                           includeHistoryEntry: includeHistoryEntry)
+            await refreshSnapshot(afterFilesystemChangeAt: snapshot.rootURL)
+            return .success(created)
+        } catch let creationError as CardCreationError {
+            return .failure(creationError)
+        } catch {
+            return .failure(.writeFailed(error.localizedDescription))
         }
     }
 
