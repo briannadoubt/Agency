@@ -8,6 +8,7 @@ public struct CodexRunRequest: Codable, Sendable, Equatable {
     public let cardRelativePath: String
     public let projectBookmark: Data
     public let logDirectory: URL
+    public let outputDirectory: URL
     public let allowNetwork: Bool
     public let cliArgs: [String]
 
@@ -16,6 +17,7 @@ public struct CodexRunRequest: Codable, Sendable, Equatable {
                 cardRelativePath: String,
                 projectBookmark: Data,
                 logDirectory: URL,
+                outputDirectory: URL,
                 allowNetwork: Bool,
                 cliArgs: [String]) {
         self.runID = runID
@@ -23,6 +25,7 @@ public struct CodexRunRequest: Codable, Sendable, Equatable {
         self.cardRelativePath = cardRelativePath
         self.projectBookmark = projectBookmark
         self.logDirectory = logDirectory
+        self.outputDirectory = outputDirectory
         self.allowNetwork = allowNetwork
         self.cliArgs = cliArgs
     }
@@ -122,5 +125,18 @@ public enum CodexSupervisorError: Error, Equatable, LocalizedError {
         case .payloadEncodingFailed:
             return "Unable to encode worker payload."
         }
+    }
+}
+
+extension CodexRunRequest {
+    func updatingDirectories(logDirectory: URL, outputDirectory: URL) -> CodexRunRequest {
+        CodexRunRequest(runID: runID,
+                        flow: flow,
+                        cardRelativePath: cardRelativePath,
+                        projectBookmark: projectBookmark,
+                        logDirectory: logDirectory,
+                        outputDirectory: outputDirectory,
+                        allowNetwork: allowNetwork,
+                        cliArgs: cliArgs)
     }
 }

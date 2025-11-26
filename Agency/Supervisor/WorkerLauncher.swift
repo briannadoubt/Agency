@@ -17,6 +17,7 @@ final class WorkerLauncher {
     private let fileManager: FileManager
     private let logger = Logger(subsystem: "dev.agency.app", category: "WorkerLauncher")
     private var processes: [UUID: Process] = [:]
+    private var runDirectories: [UUID: RunDirectories] = [:]
 
     init(fileManager: FileManager = .default) {
         self.fileManager = fileManager
@@ -55,6 +56,9 @@ final class WorkerLauncher {
     // MARK: Launching
 
     func launch(request: CodexRunRequest) async throws -> WorkerEndpoint {
+        let directories = try RunDirectories.prepare(for: request, fileManager: fileManager)
+        let scopedRequest = request.updatingDirectories(logDirectory: directories.logDirectory,
+                                                        outputDirectory: directories.outputDirectory)
         let endpoint = WorkerEndpoint(runID: request.runID,
                                       bootstrapName: bootstrapName(for: request.runID))
 
@@ -62,19 +66,27 @@ final class WorkerLauncher {
             throw CodexSupervisorError.workerBinaryMissing
         }
 
-        let payloadURL = try persistPayload(request: request)
+        let payloadURL = try persistPayload(request: scopedRequest)
 
         let process = Process()
         process.executableURL = workerBinary
-        process.arguments = ["--run-id", request.runID.uuidString,
+        process.arguments = ["--run-id", scopedRequest.runID.uuidString,
                              "--endpoint", endpoint.bootstrapName,
                              "--payload", payloadURL.path]
-        process.environment = defaultEnvironment(for: request)
+        process.environment = defaultEnvironment(for: scopedRequest)
+        process.terminationHandler = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.cleanupOutputs(for: scopedRequest.runID)
+                self?.processes[scopedRequest.runID] = nil
+            }
+        }
 
         do {
             try process.run()
-            processes[request.runID] = process
+            processes[scopedRequest.runID] = process
+            runDirectories[scopedRequest.runID] = directories
         } catch {
+            cleanupOutputs(for: scopedRequest.runID)
             throw CodexSupervisorError.workerLaunchFailed(error.localizedDescription)
         }
 
@@ -89,8 +101,8 @@ final class WorkerLauncher {
     func cancel(job: any JobHandle) async {
         if let process = processes[job.runID] {
             process.terminate()
-            processes[job.runID] = nil
         }
+        cleanupOutputs(for: job.runID)
     }
 
     // MARK: Helpers
@@ -115,9 +127,11 @@ final class WorkerLauncher {
         environment["CODEX_RUN_ID"] = request.runID.uuidString
         environment["CODEX_ENDPOINT_NAME"] = bootstrapName(for: request.runID)
         environment["CODEX_LOG_DIRECTORY"] = request.logDirectory.path
+        environment["CODEX_OUTPUT_DIRECTORY"] = request.outputDirectory.path
         environment["CODEX_ALLOW_NETWORK"] = request.allowNetwork ? "1" : "0"
         environment["CODEX_PROJECT_BOOKMARK_BASE64"] = request.projectBookmark.base64EncodedString()
         environment["CODEX_CLI_ARGS"] = request.cliArgs.joined(separator: " ")
+        environment["TMPDIR"] = request.outputDirectory.path
         return environment
     }
 
@@ -141,9 +155,37 @@ final class WorkerLauncher {
 
         return nil
     }
+
+    private func cleanupOutputs(for runID: UUID) {
+        guard let directories = runDirectories.removeValue(forKey: runID) else { return }
+        directories.cleanupOutputs(using: fileManager)
+    }
 }
 
 /// Jobs managed by the launcher conform to this protocol so cancellation remains testable without SMAppService.
 protocol JobHandle {
     var runID: UUID { get }
+}
+
+struct RunDirectories {
+    let logDirectory: URL
+    let outputDirectory: URL
+
+    static func prepare(for request: CodexRunRequest, fileManager: FileManager) throws -> RunDirectories {
+        let logDirectory = request.logDirectory
+        try fileManager.createDirectory(at: logDirectory,
+                                        withIntermediateDirectories: true,
+                                        attributes: nil)
+
+        let outputDirectory = logDirectory.appendingPathComponent("tmp", isDirectory: true)
+        try fileManager.createDirectory(at: outputDirectory,
+                                        withIntermediateDirectories: true,
+                                        attributes: nil)
+
+        return RunDirectories(logDirectory: logDirectory, outputDirectory: outputDirectory)
+    }
+
+    func cleanupOutputs(using fileManager: FileManager) {
+        try? fileManager.removeItem(at: outputDirectory)
+    }
 }
