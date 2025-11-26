@@ -59,6 +59,7 @@ final class WorkerLauncher {
         let directories = try RunDirectories.prepare(for: request, fileManager: fileManager)
         let scopedRequest = request.updatingDirectories(logDirectory: directories.logDirectory,
                                                         outputDirectory: directories.outputDirectory)
+        runDirectories[scopedRequest.runID] = directories
         let endpoint = WorkerEndpoint(runID: request.runID,
                                       bootstrapName: bootstrapName(for: request.runID))
 
@@ -84,7 +85,6 @@ final class WorkerLauncher {
         do {
             try process.run()
             processes[scopedRequest.runID] = process
-            runDirectories[scopedRequest.runID] = directories
         } catch {
             cleanupOutputs(for: scopedRequest.runID)
             throw CodexSupervisorError.workerLaunchFailed(error.localizedDescription)
