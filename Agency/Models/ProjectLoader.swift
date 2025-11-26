@@ -244,9 +244,18 @@ struct SecurityScopedAccess: Equatable {
     let url: URL
     private let didStart: Bool
 
-    init(url: URL) {
+    nonisolated init(url: URL) {
         self.url = url
         self.didStart = url.startAccessingSecurityScopedResource()
+    }
+
+    /// Indicates whether the underlying security scope was successfully activated.
+    var isActive: Bool { didStart }
+
+    /// Testing hook to bypass `startAccessingSecurityScopedResource` when a scoped URL is unavailable.
+    nonisolated init(url: URL, didStart: Bool) {
+        self.url = url
+        self.didStart = didStart
     }
 
     func stopAccessing() {
@@ -267,7 +276,7 @@ struct ProjectBookmarkStore {
 
     func saveBookmark(for url: URL) throws {
         let resolved = url.standardizedFileURL
-        let data = try resolved.bookmarkData(options: [.withSecurityScope],
+        let data = try resolved.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
                                         includingResourceValuesForKeys: nil,
                                         relativeTo: nil)
         defaults.set(data, forKey: bookmarkKey)

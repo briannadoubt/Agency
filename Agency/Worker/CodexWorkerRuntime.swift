@@ -7,20 +7,42 @@ struct CodexWorkerRuntime {
     let payload: CodexRunRequest
     let endpointName: String
     let logDirectory: URL
+    let outputDirectory: URL
     let allowNetwork: Bool
 
     private let logger = Logger(subsystem: "dev.agency.worker", category: "runtime")
 
     func run() async {
         do {
-            try record(event: "workerReady", extra: ["runID": payload.runID.uuidString])
+            let sandbox = WorkerSandbox(projectBookmark: payload.projectBookmark,
+                                        outputDirectory: outputDirectory)
+            let project = try sandbox.openProjectScope()
+            defer { project.access.stopAccessing() }
+
+            try sandbox.ensureOutputDirectoryExists()
+
+            try record(event: "workerReady",
+                       extra: ["runID": payload.runID.uuidString,
+                               "project": project.url.path,
+                               "output": outputDirectory.path,
+                               "bookmarkStale": "\(project.bookmarkWasStale)"])
+
             // In the real helper this is where Codex CLI would run. Here we simulate fast completion.
             try await Task.sleep(for: .milliseconds(10))
+
             try record(event: "workerFinished",
                        extra: ["status": WorkerRunResult.Status.succeeded.rawValue,
                                "card": payload.cardRelativePath])
         } catch {
             logger.error("Worker runtime failed: \(error.localizedDescription)")
+            do {
+                try record(event: "workerFinished",
+                           extra: ["status": WorkerRunResult.Status.failed.rawValue,
+                                   "card": payload.cardRelativePath,
+                                   "error": error.localizedDescription])
+            } catch {
+                logger.error("Unable to record failure event: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -69,10 +91,22 @@ enum CodexWorkerBootstrap {
             payload = placeholderPayload(runID: runID)
         }
 
+        let bookmarkOverride = env["CODEX_PROJECT_BOOKMARK_BASE64"].flatMap { Data(base64Encoded: $0) }
+        let outputDirectory = env["CODEX_OUTPUT_DIRECTORY"].map { URL(fileURLWithPath: $0) } ?? payload.outputDirectory
+        let resolvedPayload = CodexRunRequest(runID: payload.runID,
+                                              flow: payload.flow,
+                                              cardRelativePath: payload.cardRelativePath,
+                                              projectBookmark: bookmarkOverride ?? payload.projectBookmark,
+                                              logDirectory: payload.logDirectory,
+                                              outputDirectory: outputDirectory,
+                                              allowNetwork: payload.allowNetwork,
+                                              cliArgs: payload.cliArgs)
+
         let allowNetwork = env["CODEX_ALLOW_NETWORK"] == "1"
-        return CodexWorkerRuntime(payload: payload,
+        return CodexWorkerRuntime(payload: resolvedPayload,
                                   endpointName: endpointName,
                                   logDirectory: URL(fileURLWithPath: logPath),
+                                  outputDirectory: outputDirectory,
                                   allowNetwork: allowNetwork)
     }
 
@@ -87,8 +121,96 @@ enum CodexWorkerBootstrap {
                         cardRelativePath: "",
                         projectBookmark: Data(),
                         logDirectory: FileManager.default.temporaryDirectory,
+                        outputDirectory: FileManager.default.temporaryDirectory,
                         allowNetwork: false,
                         cliArgs: [])
     }
 }
 
+// MARK: - Sandbox Helpers
+
+struct BookmarkResolution {
+    let url: URL
+    let isStale: Bool
+}
+
+struct BookmarkResolver {
+    typealias Resolver = (_ bookmark: Data, _ options: URL.BookmarkResolutionOptions) throws -> BookmarkResolution
+    let resolve: Resolver
+
+    static let live = BookmarkResolver { bookmark, options in
+        var isStale = false
+        let url = try URL(resolvingBookmarkData: bookmark,
+                          options: options,
+                          relativeTo: nil,
+                          bookmarkDataIsStale: &isStale)
+        return BookmarkResolution(url: url, isStale: isStale)
+    }
+}
+
+enum WorkerSandboxError: LocalizedError {
+    case missingBookmark
+    case bookmarkResolutionFailed(String)
+    case securityScopeUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .missingBookmark:
+            return "Project bookmark missing; worker cannot access files."
+        case .bookmarkResolutionFailed(let reason):
+            return "Unable to resolve project bookmark: \(reason)"
+        case .securityScopeUnavailable:
+            return "Security scope could not be activated for the project bookmark."
+        }
+    }
+}
+
+struct WorkerSandbox {
+    let projectBookmark: Data
+    let outputDirectory: URL
+    private let fileManager: FileManager
+    private let bookmarkResolver: BookmarkResolver
+    private let accessFactory: @Sendable (URL) -> SecurityScopedAccess
+
+    init(projectBookmark: Data,
+         outputDirectory: URL,
+         fileManager: FileManager = .default,
+         bookmarkResolver: BookmarkResolver = .live,
+         accessFactory: @escaping @Sendable (URL) -> SecurityScopedAccess = { url in SecurityScopedAccess(url: url) }) {
+        self.projectBookmark = projectBookmark
+        self.outputDirectory = outputDirectory
+        self.fileManager = fileManager
+        self.bookmarkResolver = bookmarkResolver
+        self.accessFactory = accessFactory
+    }
+
+    func openProjectScope() throws -> ScopedProject {
+        guard !projectBookmark.isEmpty else { throw WorkerSandboxError.missingBookmark }
+        let resolution: BookmarkResolution
+        do {
+            resolution = try bookmarkResolver.resolve(projectBookmark,
+                                                      [.withSecurityScope, .withoutUI, .withoutMounting])
+        } catch {
+            throw WorkerSandboxError.bookmarkResolutionFailed(error.localizedDescription)
+        }
+
+        let access = accessFactory(resolution.url.standardizedFileURL)
+        guard access.isActive else { throw WorkerSandboxError.securityScopeUnavailable }
+
+        return ScopedProject(url: resolution.url.standardizedFileURL,
+                             access: access,
+                             bookmarkWasStale: resolution.isStale)
+    }
+
+    func ensureOutputDirectoryExists() throws {
+        try fileManager.createDirectory(at: outputDirectory,
+                                        withIntermediateDirectories: true,
+                                        attributes: nil)
+    }
+
+    struct ScopedProject {
+        let url: URL
+        let access: SecurityScopedAccess
+        let bookmarkWasStale: Bool
+    }
+}
