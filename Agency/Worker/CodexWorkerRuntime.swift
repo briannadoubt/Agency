@@ -186,17 +186,20 @@ struct WorkerSandbox {
 
     func openProjectScope() throws -> ScopedProject {
         guard !projectBookmark.isEmpty else { throw WorkerSandboxError.missingBookmark }
+        let resolution: BookmarkResolution
         do {
-            let resolution = try bookmarkResolver.resolve(projectBookmark,
-                                                          [.withSecurityScope, .withoutUI, .withoutMounting])
-            let access = accessFactory(resolution.url.standardizedFileURL)
-            guard access.isActive else { throw WorkerSandboxError.securityScopeUnavailable }
-            return ScopedProject(url: resolution.url.standardizedFileURL,
-                                 access: access,
-                                 bookmarkWasStale: resolution.isStale)
+            resolution = try bookmarkResolver.resolve(projectBookmark,
+                                                      [.withSecurityScope, .withoutUI, .withoutMounting])
         } catch {
             throw WorkerSandboxError.bookmarkResolutionFailed(error.localizedDescription)
         }
+
+        let access = accessFactory(resolution.url.standardizedFileURL)
+        guard access.isActive else { throw WorkerSandboxError.securityScopeUnavailable }
+
+        return ScopedProject(url: resolution.url.standardizedFileURL,
+                             access: access,
+                             bookmarkWasStale: resolution.isStale)
     }
 
     func ensureOutputDirectoryExists() throws {

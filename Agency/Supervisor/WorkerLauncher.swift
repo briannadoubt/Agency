@@ -64,10 +64,17 @@ final class WorkerLauncher {
                                       bootstrapName: bootstrapName(for: request.runID))
 
         guard let workerBinary = locateWorkerBinary() else {
+            cleanupOutputs(for: scopedRequest.runID)
             throw CodexSupervisorError.workerBinaryMissing
         }
 
-        let payloadURL = try persistPayload(request: scopedRequest)
+        let payloadURL: URL
+        do {
+            payloadURL = try persistPayload(request: scopedRequest)
+        } catch {
+            cleanupOutputs(for: scopedRequest.runID)
+            throw error
+        }
 
         let process = Process()
         process.executableURL = workerBinary
