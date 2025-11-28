@@ -5,7 +5,9 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @State private var loader: ProjectLoader
     @State private var agentRunner: AgentRunner
+    @State private var phaseCreationController = PhaseCreationController()
     @State private var showingImporter = false
+    @State private var isShowingPhaseCreator = false
     @State private var selectedPhaseNumber: Int?
     @State private var importError: String?
 
@@ -26,6 +28,14 @@ struct ContentView: View {
                     } label: {
                         Label("Open Project…", systemImage: "folder.badge.plus")
                     }
+
+                    Button {
+                        isShowingPhaseCreator = true
+                    } label: {
+                        Label("Add Phase (with Agent…)", systemImage: "sparkles")
+                    }
+                    .disabled(loader.loadedSnapshot == nil)
+                    .accessibilityLabel("Add phase with agent")
 
                     if let snapshot = loader.loadedSnapshot {
                         Text(snapshot.rootURL.path)
@@ -69,7 +79,8 @@ struct ContentView: View {
         } detail: {
             DetailView(loader: loader,
                        snapshot: loader.loadedSnapshot,
-                       selectedPhaseNumber: $selectedPhaseNumber)
+                       selectedPhaseNumber: $selectedPhaseNumber,
+                       onAddPhase: { isShowingPhaseCreator = true })
         }
         .navigationTitle(Text("Agency"))
         .environment(agentRunner)
@@ -85,6 +96,28 @@ struct ContentView: View {
                 importError = error.localizedDescription
             }
         }
+        .sheet(isPresented: $isShowingPhaseCreator) {
+            PhaseCreationSheet(controller: phaseCreationController,
+                               snapshot: loader.loadedSnapshot,
+                               onCancel: {
+                                   isShowingPhaseCreator = false
+                                   phaseCreationController.runState = nil
+                                   phaseCreationController.errorMessage = nil
+                               },
+                               onComplete: { success in
+                                   guard success else { return }
+                                   Task {
+                                       await loader.refreshProjectSnapshot()
+                                       await MainActor.run {
+                                           if let latest = loader.loadedSnapshot?.phases.map(\.phase.number).max() {
+                                               selectedPhaseNumber = latest
+                                           }
+                                           isShowingPhaseCreator = false
+                                           phaseCreationController.runState = nil
+                                       }
+                                   }
+                               })
+        }
         .task {
             loader.restoreBookmarkIfAvailable()
         }
@@ -92,6 +125,12 @@ struct ContentView: View {
             guard selectedPhaseNumber == nil,
                   let first = snapshot?.phases.first?.phase.number else { return }
             selectedPhaseNumber = first
+        }
+        .onChange(of: isShowingPhaseCreator) { _, presented in
+            if !presented {
+                phaseCreationController.runState = nil
+                phaseCreationController.errorMessage = nil
+            }
         }
         .alert("Unable to open folder", isPresented: Binding(get: { importError != nil },
                                                             set: { newValue in
@@ -110,6 +149,7 @@ private struct DetailView: View {
     let loader: ProjectLoader
     let snapshot: ProjectLoader.ProjectSnapshot?
     @Binding var selectedPhaseNumber: Int?
+    let onAddPhase: () -> Void
 
     var body: some View {
         if let snapshot {
@@ -121,7 +161,9 @@ private struct DetailView: View {
                     VStack(alignment: .leading, spacing: DesignTokens.Spacing.large) {
                         ProjectSummary(snapshot: snapshot)
 
-                        if let phase = selectedPhase(from: snapshot) {
+                        if snapshot.phases.isEmpty {
+                            EmptyPhasePlaceholder(onAddPhase: onAddPhase)
+                        } else if let phase = selectedPhase(from: snapshot) {
                             PhaseDetail(phase: phase,
                                        onMove: { card, status, logHistory in
                                            await loader.moveCard(card,
@@ -234,6 +276,40 @@ private struct ProjectSummary: View {
                 ValidationIssuesView(issues: snapshot.validationIssues)
             }
         }
+    }
+}
+
+private struct EmptyPhasePlaceholder: View {
+    let onAddPhase: () -> Void
+
+    var body: some View {
+        VStack(spacing: DesignTokens.Spacing.medium) {
+            Image(systemName: "square.stack.3d.up.slash")
+                .font(.system(size: 42, weight: .regular))
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+
+            Text("No phases found")
+                .font(DesignTokens.Typography.titleLarge)
+
+            Text("Use the agent to scaffold the first phase, generate a plan, and optionally seed starter tasks.")
+                .multilineTextAlignment(.center)
+                .font(DesignTokens.Typography.body)
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+
+            Button {
+                onAddPhase()
+            } label: {
+                Label("Add Phase (with Agent…)", systemImage: "sparkles")
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityLabel("Add phase with agent")
+        }
+        .frame(maxWidth: .infinity, minHeight: 220)
+        .padding(DesignTokens.Spacing.large)
+        .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium)
+            .fill(DesignTokens.Colors.surface))
+        .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium)
+            .stroke(DesignTokens.Colors.strokeMuted))
     }
 }
 

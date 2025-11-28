@@ -158,8 +158,8 @@ struct CardClaimerTests {
         try cardMarkdown(code: "3.2", slug: "active", agentStatus: "idle", history: "2025-01-01 - Seeded").write(to: inProgressCardURL, atomically: true, encoding: .utf8)
 
         let parser = CardFileParser()
-        let backlogCard = try parser.parse(fileURL: backlogCardURL, contents: try String(contentsOf: backlogCardURL))
-        let inProgressCard = try parser.parse(fileURL: inProgressCardURL, contents: try String(contentsOf: inProgressCardURL))
+        let backlogCard = try parser.parse(fileURL: backlogCardURL, contents: try String(contentsOf: backlogCardURL, encoding: .utf8))
+        let inProgressCard = try parser.parse(fileURL: inProgressCardURL, contents: try String(contentsOf: inProgressCardURL, encoding: .utf8))
         let phase = try Phase(path: phaseURL)
 
         return (root, [PhaseSnapshot(phase: phase, cards: [backlogCard, inProgressCard])])
@@ -181,7 +181,7 @@ struct CardClaimerTests {
         try cardMarkdown(code: "4.1", slug: "claim", agentStatus: agentStatus, history: "2025-01-01 - Seeded").write(to: backlogURL, atomically: true, encoding: .utf8)
 
         let parser = CardFileParser()
-        let backlogCard = try parser.parse(fileURL: backlogURL, contents: try String(contentsOf: backlogURL))
+        let backlogCard = try parser.parse(fileURL: backlogURL, contents: try String(contentsOf: backlogURL, encoding: .utf8))
         let phase = try Phase(path: phaseURL)
 
         return (root, [PhaseSnapshot(phase: phase, cards: [backlogCard])])
