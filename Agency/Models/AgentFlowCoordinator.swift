@@ -1,0 +1,403 @@
+import Foundation
+
+enum AgentFlow: String, CaseIterable, Codable, Equatable {
+    case implement
+    case review
+    case research
+}
+
+enum AgentRunStatus: String, Codable, Equatable {
+    case idle
+    case queued
+    case running
+    case succeeded
+    case failed
+    case canceled
+}
+
+struct AgentRunLock: Codable, Equatable {
+    let runID: UUID
+    let flow: AgentFlow
+    let startedAt: Date
+    let cardRelativePath: String
+}
+
+struct AgentRunRequest: Equatable, Codable {
+    let runID: UUID
+    let flow: AgentFlow
+    let cardRelativePath: String
+    let projectBookmark: Data
+    let logDirectory: URL
+    let allowNetwork: Bool
+    let allowFilesScope: URL
+
+    var cliArguments: [String] {
+        [
+            "--flow", flow.rawValue,
+            "--card", cardRelativePath,
+            "--allow-files", allowFilesScope.path,
+            "--run-id", runID.uuidString
+        ]
+    }
+}
+
+struct AgentWorkerEndpoint: Equatable {
+    let runID: UUID
+    let logDirectory: URL
+}
+
+protocol AgentWorkerLaunching {
+    func launchWorker(request: AgentRunRequest) async throws -> AgentWorkerEndpoint
+    func cancelWorker(runID: UUID) async
+}
+
+extension AgentWorkerLaunching {
+    func cancelWorker(runID: UUID) async { }
+}
+
+struct AgentRunLogPaths: Equatable {
+    let directory: URL
+    let workerLog: URL
+    let events: URL
+    let result: URL
+    let stdoutTail: URL
+}
+
+struct AgentRunLogLocator {
+    private let baseDirectory: URL
+    private let fileManager: FileManager
+
+    init(baseDirectory: URL,
+         fileManager: FileManager = .default) {
+        self.baseDirectory = baseDirectory
+        self.fileManager = fileManager
+    }
+
+    func makePaths(for runID: UUID, on date: Date) throws -> AgentRunLogPaths {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .iso8601)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd"
+
+        let directory = baseDirectory
+            .appendingPathComponent("Logs", isDirectory: true)
+            .appendingPathComponent("Agents", isDirectory: true)
+            .appendingPathComponent(formatter.string(from: date), isDirectory: true)
+            .appendingPathComponent(runID.uuidString, isDirectory: true)
+
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        return AgentRunLogPaths(directory: directory,
+                                workerLog: directory.appendingPathComponent("worker.log"),
+                                events: directory.appendingPathComponent("events.jsonl"),
+                                result: directory.appendingPathComponent("result.json"),
+                                stdoutTail: directory.appendingPathComponent("stdout-tail.txt"))
+    }
+}
+
+struct AgentBackoffPolicy {
+    let baseDelay: TimeInterval
+    let multiplier: Double
+    let jitterFraction: Double
+    let maxDelay: TimeInterval
+    let maxRetries: Int
+    let random: @Sendable () -> Double
+
+    init(baseDelay: TimeInterval = 30,
+         multiplier: Double = 2,
+         jitterFraction: Double = 0.1,
+         maxDelay: TimeInterval = 300,
+         maxRetries: Int = 5,
+         random: @escaping @Sendable () -> Double = { Double.random(in: -1...1) }) {
+        self.baseDelay = baseDelay
+        self.multiplier = multiplier
+        self.jitterFraction = jitterFraction
+        self.maxDelay = maxDelay
+        self.maxRetries = maxRetries
+        self.random = random
+    }
+
+    func delay(forFailureCount failures: Int) -> TimeInterval? {
+        guard failures > 0 else { return nil }
+        guard failures <= maxRetries else { return nil }
+
+        let scaled = baseDelay * pow(multiplier, Double(failures - 1))
+        let clamped = min(scaled, maxDelay)
+        let jitter = 1 + (jitterFraction * random())
+        return clamped * jitter
+    }
+}
+
+enum AgentRunOutcome: Equatable {
+    case succeeded
+    case failed
+    case canceled
+
+    nonisolated var status: AgentRunStatus {
+        switch self {
+        case .succeeded:
+            return .succeeded
+        case .failed:
+            return .failed
+        case .canceled:
+            return .canceled
+        }
+    }
+
+    nonisolated static func == (lhs: AgentRunOutcome, rhs: AgentRunOutcome) -> Bool {
+        switch (lhs, rhs) {
+        case (.succeeded, .succeeded),
+             (.failed, .failed),
+             (.canceled, .canceled):
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+enum AgentFlowError: LocalizedError, Equatable {
+    case cardOutsideProject
+    case alreadyLocked(runID: UUID, status: String?)
+    case missingLock
+    case mismatchedRunID
+    case writeFailed(String)
+    case workerLaunchFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .cardOutsideProject:
+            return "Card path is not under the selected project root."
+        case .alreadyLocked(let runID, let status):
+            if let status, !status.isEmpty {
+                return "Card is locked by agent_status=\(status) (runID=\(runID))."
+            }
+            return "Card is already locked for an agent run."
+        case .missingLock:
+            return "No lock exists for this card."
+        case .mismatchedRunID:
+            return "Run completion does not match the active lock."
+        case .writeFailed(let message):
+            return message
+        case .workerLaunchFailed(let message):
+            return message
+        }
+    }
+}
+
+struct AgentEnqueuedRun: Equatable {
+    let runID: UUID
+    let card: Card
+    let request: AgentRunRequest
+    let endpoint: AgentWorkerEndpoint
+    let logPaths: AgentRunLogPaths
+}
+
+/// Coordinates agent frontmatter updates, lock management, XPC payload construction, and backoff metadata.
+@MainActor
+final class AgentFlowCoordinator {
+    private var locks: [URL: AgentRunLock] = [:]
+    private var failureCounts: [URL: Int] = [:]
+
+    private let worker: any AgentWorkerLaunching
+    private let writer: CardMarkdownWriter
+    private let logLocator: AgentRunLogLocator
+    private let lockStore: AgentLockStore?
+    private let dateProvider: @Sendable () -> Date
+    private let backoffPolicy: AgentBackoffPolicy
+
+    init(worker: any AgentWorkerLaunching,
+         writer: CardMarkdownWriter,
+         logLocator: AgentRunLogLocator,
+         lockStore: AgentLockStore? = nil,
+         dateProvider: @escaping @Sendable () -> Date = Date.init,
+         backoffPolicy: AgentBackoffPolicy) {
+        self.worker = worker
+        self.writer = writer
+        self.logLocator = logLocator
+        self.lockStore = lockStore
+        self.dateProvider = dateProvider
+        self.backoffPolicy = backoffPolicy
+    }
+
+    func enqueueRun(for card: Card,
+                    flow: AgentFlow,
+                    projectRoot: URL,
+                    bookmark: Data,
+                    allowNetwork: Bool = false) async throws -> AgentEnqueuedRun {
+        let cardURL = card.filePath.standardizedFileURL
+        let rootURL = projectRoot.standardizedFileURL
+
+        guard cardURL.path.hasPrefix(rootURL.path) else {
+            throw AgentFlowError.cardOutsideProject
+        }
+
+        if let existing = locks[cardURL] {
+            throw AgentFlowError.alreadyLocked(runID: existing.runID,
+                                               status: card.frontmatter.agentStatus)
+        }
+
+        if let status = card.frontmatter.agentStatus,
+           !status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           status.lowercased() != AgentRunStatus.idle.rawValue {
+            throw AgentFlowError.alreadyLocked(runID: locks[cardURL]?.runID ?? UUID(),
+                                               status: status)
+        }
+
+        let relativePath = cardRelativePath(of: cardURL, from: rootURL)
+        let runID = UUID()
+        let logPaths = try logLocator.makePaths(for: runID, on: dateProvider())
+        let lock = AgentRunLock(runID: runID,
+                                flow: flow,
+                                startedAt: dateProvider(),
+                                cardRelativePath: relativePath)
+        locks[cardURL] = lock
+        do {
+            try lockStore?.persist(lock, for: relativePath)
+        } catch {
+            locks.removeValue(forKey: cardURL)
+            throw error
+        }
+
+        let queuedSnapshot: CardDocumentSnapshot
+        let runningSnapshot: CardDocumentSnapshot
+
+        do {
+            queuedSnapshot = try update(card: card,
+                                        snapshot: nil,
+                                        flow: flow,
+                                        status: .queued)
+            runningSnapshot = try update(card: card,
+                                         snapshot: queuedSnapshot,
+                                         flow: flow,
+                                         status: .running)
+        } catch {
+            locks.removeValue(forKey: cardURL)
+            lockStore?.remove(relativePath: lock.cardRelativePath)
+            throw error
+        }
+
+        let request = AgentRunRequest(runID: runID,
+                                      flow: flow,
+                                      cardRelativePath: relativePath,
+                                      projectBookmark: bookmark,
+                                      logDirectory: logPaths.directory,
+                                      allowNetwork: allowNetwork,
+                                      allowFilesScope: rootURL)
+
+        do {
+            let endpoint = try await worker.launchWorker(request: request)
+            return AgentEnqueuedRun(runID: runID,
+                                    card: runningSnapshot.card,
+                                    request: request,
+                                    endpoint: endpoint,
+                                    logPaths: logPaths)
+        } catch {
+            locks.removeValue(forKey: cardURL)
+            lockStore?.remove(relativePath: relativePath)
+            throw AgentFlowError.workerLaunchFailed(error.localizedDescription)
+        }
+    }
+
+    func completeRun(for card: Card,
+                     runID: UUID,
+                     outcome: AgentRunOutcome) async throws -> Card {
+        let cardURL = card.filePath.standardizedFileURL
+        guard let lock = locks[cardURL] else {
+            throw AgentFlowError.missingLock
+        }
+        guard lock.runID == runID else {
+            throw AgentFlowError.mismatchedRunID
+        }
+
+        let snapshot = try update(card: card,
+                                  snapshot: nil,
+                                  flow: lock.flow,
+                                  status: outcome.status)
+
+        locks.removeValue(forKey: cardURL)
+        lockStore?.remove(relativePath: lock.cardRelativePath)
+
+        if outcome == .failed {
+            failureCounts[cardURL, default: 0] += 1
+        } else {
+            failureCounts[cardURL] = 0
+        }
+
+        return snapshot.card
+    }
+
+    func backoffDelay(for card: Card) -> TimeInterval? {
+        let cardURL = card.filePath.standardizedFileURL
+        let failures = failureCounts[cardURL] ?? 0
+        return backoffPolicy.delay(forFailureCount: failures)
+    }
+
+    func isLocked(_ card: Card) -> Bool {
+        locks[card.filePath.standardizedFileURL] != nil
+    }
+
+    private func update(card: Card,
+                        snapshot: CardDocumentSnapshot?,
+                        flow: AgentFlow,
+                        status: AgentRunStatus) throws -> CardDocumentSnapshot {
+        do {
+            let baseline = try snapshot ?? writer.loadSnapshot(for: card)
+            var draft = CardDetailFormDraft.from(card: baseline.card, today: dateProvider())
+            draft.agentFlow = flow.rawValue
+            draft.agentStatus = status.rawValue
+            return try writer.saveFormDraft(draft,
+                                            appendHistory: false,
+                                            snapshot: baseline)
+        } catch let error as CardSaveError {
+            throw AgentFlowError.writeFailed(error.localizedDescription)
+        } catch {
+            throw AgentFlowError.writeFailed(error.localizedDescription)
+        }
+    }
+
+    private func cardRelativePath(of cardURL: URL, from rootURL: URL) -> String {
+        let standardized = cardURL.standardizedFileURL
+        let root = rootURL.standardizedFileURL
+        let rootPath = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        return standardized.path.replacingOccurrences(of: rootPath, with: "")
+    }
+}
+
+struct AgentLockSnapshot: Codable, Equatable {
+    let card: String
+    let runID: UUID
+    let flow: AgentFlow
+    let startedAt: Date
+}
+
+struct AgentLockStore {
+    private let directory: URL
+    private let fileManager: FileManager
+
+    init(directory: URL, fileManager: FileManager = .default) {
+        self.directory = directory
+        self.fileManager = fileManager
+    }
+
+    func persist(_ lock: AgentRunLock, for relativePath: String) throws {
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let snapshot = AgentLockSnapshot(card: relativePath,
+                                         runID: lock.runID,
+                                         flow: lock.flow,
+                                         startedAt: lock.startedAt)
+        let data = try JSONEncoder().encode(snapshot)
+        try data.write(to: fileURL(for: relativePath), options: .atomic)
+    }
+
+    func remove(relativePath: String) {
+        try? fileManager.removeItem(at: fileURL(for: relativePath))
+    }
+
+    private func fileURL(for relativePath: String) -> URL {
+        let safeName = relativePath
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: " ", with: "-")
+        return directory.appendingPathComponent("\(safeName).json")
+    }
+}
