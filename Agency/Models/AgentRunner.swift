@@ -5,6 +5,7 @@ enum AgentFlow: String, CaseIterable, Identifiable {
     case implement
     case review
     case research
+    case plan
 
     var id: String { rawValue }
 
@@ -98,6 +99,7 @@ final class AgentRunner {
     private let pipeline: CardEditingPipeline
     private let parser: CardFileParser
     private let fileManager: FileManager
+    private var projectLoader: ProjectLoader?
     private var executors: [AgentBackendKind: any AgentExecutor]
 
     private var locks: Set<String> = []
@@ -108,14 +110,17 @@ final class AgentRunner {
     init(pipeline: CardEditingPipeline = .shared,
          parser: CardFileParser = CardFileParser(),
          fileManager: FileManager = .default,
+         projectLoader: ProjectLoader? = nil,
          executors: [AgentBackendKind: any AgentExecutor] = [:]) {
         self.pipeline = pipeline
         self.parser = parser
         self.fileManager = fileManager
+        self.projectLoader = projectLoader
         var registry = executors
         // Provide defaults so UI works without configuration.
         registry[.simulated] = registry[.simulated] ?? SimulatedAgentExecutor()
         registry[.codex] = registry[.codex] ?? SimulatedAgentExecutor() // placeholder until real Codex wiring is active
+        registry[.cli] = registry[.cli] ?? CLIPhaseExecutor()
         self.executors = registry
     }
 
@@ -128,6 +133,7 @@ final class AgentRunner {
     func startRun(card: Card,
                  flow: AgentFlow = .implement,
                  backend: AgentBackendKind = .simulated) async -> Result<AgentRunState, AgentRunError> {
+        let selectedBackend: AgentBackendKind = (backend == .simulated && flow == .plan) ? .cli : backend
         let path = card.filePath.standardizedFileURL.path
 
         if let status = card.frontmatter.agentStatus?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -142,14 +148,14 @@ final class AgentRunner {
         let runID = UUID()
         locks.insert(path)
 
-        guard let executor = executors[backend] else {
+        guard let executor = executors[selectedBackend] else {
             locks.remove(path)
-            return .failure(.backendMissing(backend))
+            return .failure(.backendMissing(selectedBackend))
         }
 
         let preparation: RunPreparation
         do {
-            preparation = try prepareRequest(for: card, runID: runID, flow: flow, backend: backend)
+            preparation = try prepareRequest(for: card, runID: runID, flow: flow, backend: selectedBackend)
         } catch {
             locks.remove(path)
             return .failure(.preparationFailed(error.localizedDescription))
@@ -170,7 +176,7 @@ final class AgentRunner {
         let state = AgentRunState(id: runID,
                                   cardPath: path,
                                   flow: flow,
-                                  backend: backend,
+                                  backend: selectedBackend,
                                   phase: .queued,
                                   progress: 0.0,
                                   logs: ["Queued run for \(card.slug)"],
@@ -351,6 +357,12 @@ final class AgentRunner {
                                    draft.agentFlow = state.flow.rawValue
                                },
                                history: historyEntry("Run \(runID) finished (\(statusValue))"))
+
+        if phase == .succeeded {
+            Task { [projectLoader] in
+                await projectLoader?.refreshProjectSnapshot()
+            }
+        }
     }
 
     private func releaseLock(for path: String) {
@@ -360,6 +372,10 @@ final class AgentRunner {
     private func prepareRequest(for card: Card, runID: UUID, flow: AgentFlow, backend: AgentBackendKind) throws -> RunPreparation {
         let (projectRoot, relativeCardPath) = projectRootAndRelativePath(for: card.filePath)
         let bookmark = try bookmark(for: projectRoot)
+        let cliArgs = cliArguments(for: flow,
+                                   projectRoot: projectRoot,
+                                   card: card,
+                                   runID: runID)
 
         let base = fileManager.temporaryDirectory.appendingPathComponent("agency-runs", isDirectory: true)
         try fileManager.createDirectory(at: base, withIntermediateDirectories: true, attributes: nil)
@@ -372,7 +388,7 @@ final class AgentRunner {
                                       logDirectory: logDirectory,
                                       outputDirectory: logDirectory,
                                       allowNetwork: false,
-                                      cliArgs: [])
+                                      cliArgs: cliArgs)
 
         let directories = try RunDirectories.prepare(for: request, fileManager: fileManager)
         let scopedRequest = request.updatingDirectories(logDirectory: directories.logDirectory,
@@ -429,6 +445,42 @@ final class AgentRunner {
 
     private func cleanupOutputs(at url: URL) {
         try? fileManager.removeItem(at: url)
+    }
+
+    private func cliArguments(for flow: AgentFlow,
+                              projectRoot: URL,
+                              card: Card,
+                              runID: UUID) -> [String] {
+        guard flow == .plan else { return [] }
+
+        var args: [String] = [
+            "--project-root", projectRoot.path,
+            "--label", planLabel(from: card),
+            "--seed-plan"
+        ]
+
+        if let summary = card.summary?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !summary.isEmpty {
+            args.append(contentsOf: ["--task-hints", summary])
+        }
+
+        args.append(contentsOf: ["--proposed-task", "Generated by run \(runID.uuidString)"])
+        return args
+    }
+
+    private func planLabel(from card: Card) -> String {
+        if let title = card.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            // Strip leading code prefix like "6.2 " if present.
+            let components = title.split(separator: " ", maxSplits: 1)
+            if components.count == 2, components[0].contains(".") {
+                return String(components[1])
+            }
+            return title
+        }
+
+        let slugWords = card.slug.replacingOccurrences(of: "-", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return slugWords.isEmpty ? "Planned Phase" : slugWords
     }
 }
 

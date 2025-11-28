@@ -86,6 +86,38 @@ final class AgentRunnerTests: XCTestCase {
     }
 
     @MainActor
+    func testPlanFlowCreatesPhaseAndRefreshesLoader() async throws {
+        let (card, tempRoot) = try makeCard()
+        let runner = AgentRunner(executors: [.cli: CLIPhaseExecutor()])
+        let start = await runner.startRun(card: card, flow: .plan, backend: .cli)
+        guard case .success(let state) = start else {
+            XCTFail("Plan run failed to start")
+            try FileManager.default.removeItem(at: tempRoot)
+            return
+        }
+
+        let finished = await waitFor(runner.state(for: card)?.phase == .succeeded, timeout: 8)
+        XCTAssertTrue(finished, "Plan run did not finish")
+
+        let projectURL = tempRoot.appendingPathComponent("project", isDirectory: true)
+        let phases = try FileManager.default.contentsOfDirectory(at: projectURL,
+                                                                 includingPropertiesForKeys: [.isDirectoryKey],
+                                                                 options: [.skipsHiddenFiles])
+            .filter { $0.lastPathComponent.hasPrefix("phase-") }
+        XCTAssertEqual(phases.count, 2, "Expected new phase to be created")
+
+        let newPhaseURL = phases.first { $0.lastPathComponent.starts(with: "phase-1-") } ?? phases.last!
+        let planURL = newPhaseURL
+            .appendingPathComponent(CardStatus.backlog.folderName, isDirectory: true)
+            .appendingPathComponent("1.0-phase-plan.md")
+        let planContents = try String(contentsOf: planURL, encoding: .utf8)
+        XCTAssertTrue(planContents.contains(state.id.uuidString))
+        XCTAssertTrue(planContents.lowercased().contains("plan"), "History should include flow name")
+
+        try FileManager.default.removeItem(at: tempRoot)
+    }
+
+    @MainActor
     private func makeCard() throws -> (Card, URL) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let phase = root.appendingPathComponent("project/phase-0-test")

@@ -124,6 +124,12 @@ final class ProjectLoader {
         }
     }
 
+    /// Refreshes the in-memory snapshot from disk without requiring a relaunch.
+    func refreshProjectSnapshot() async {
+        guard let snapshot = loadedSnapshot else { return }
+        await refreshSnapshot(afterFilesystemChangeAt: snapshot.rootURL)
+    }
+
     func previewClaim(owner: String? = nil) -> Result<Card, CardClaimError> {
         guard let snapshot = loadedSnapshot else { return .failure(.snapshotUnavailable) }
 

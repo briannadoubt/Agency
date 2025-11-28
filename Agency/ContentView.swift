@@ -3,11 +3,17 @@ import Observation
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @State private var loader = ProjectLoader()
-    @State private var agentRunner = AgentRunner()
+    @State private var loader: ProjectLoader
+    @State private var agentRunner: AgentRunner
     @State private var showingImporter = false
     @State private var selectedPhaseNumber: Int?
     @State private var importError: String?
+
+    init() {
+        let loader = ProjectLoader()
+        _loader = State(initialValue: loader)
+        _agentRunner = State(initialValue: AgentRunner(projectLoader: loader))
+    }
 
     var body: some View {
         @Bindable var loader = loader
