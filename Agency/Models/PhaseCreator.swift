@@ -5,6 +5,7 @@ enum PhaseScaffoldingError: LocalizedError, Equatable {
     case emptyLabel
     case phaseAlreadyExists(String)
     case failedToCreate(String)
+    case planWriteFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -16,6 +17,8 @@ enum PhaseScaffoldingError: LocalizedError, Equatable {
             return "Phase \(name) already exists."
         case .failedToCreate(let message):
             return "Unable to create phase: \(message)"
+        case .planWriteFailed(let message):
+            return "Unable to write plan artifact: \(message)"
         }
     }
 }
@@ -29,6 +32,7 @@ struct PhaseScaffoldingResult: Codable, Equatable {
     let planArtifact: String?
     let seededCards: [String]
     let logs: [String]
+    let exitCode: Int
 }
 
 struct PhaseScaffoldingOptions: Equatable {
@@ -37,6 +41,7 @@ struct PhaseScaffoldingOptions: Equatable {
     let seedPlan: Bool
     let seedCardTitles: [String]
     let taskHints: String?
+    let proposedTasks: [String]
 }
 
 /// Creates a new phase directory with status folders, optional plan artifact, and optional seed cards.
@@ -57,7 +62,8 @@ struct PhaseCreator {
                      label: String,
                      seedPlan: Bool = false,
                      seedCardTitles: [String] = [],
-                     taskHints: String? = nil) async throws -> PhaseScaffoldingResult {
+                     taskHints: String? = nil,
+                     proposedTasks: [String] = []) async throws -> PhaseScaffoldingResult {
         guard !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw PhaseScaffoldingError.emptyLabel
         }
@@ -87,7 +93,8 @@ struct PhaseCreator {
                 planPath = try writePlanArtifact(phaseNumber: nextNumber,
                                                  phaseLabel: label,
                                                  phaseURL: phaseURL,
-                                                 taskHints: taskHints)
+                                                 taskHints: taskHints,
+                                                 proposedTasks: proposedTasks.isEmpty ? seedCardTitles : proposedTasks)
                 logs.append("Wrote plan artifact at \(planPath ?? "")")
             }
 
@@ -112,7 +119,10 @@ struct PhaseCreator {
                                           createdDirectories: statusFolderPaths(at: phaseURL),
                                           planArtifact: planPath,
                                           seededCards: seededCardPaths,
-                                          logs: logs)
+                                          logs: logs,
+                                          exitCode: 0)
+        } catch let error as PhaseScaffoldingError {
+            throw error
         } catch {
             throw PhaseScaffoldingError.failedToCreate(error.localizedDescription)
         }
@@ -159,20 +169,27 @@ struct PhaseCreator {
     private func writePlanArtifact(phaseNumber: Int,
                                    phaseLabel: String,
                                    phaseURL: URL,
-                                   taskHints: String?) throws -> String {
+                                   taskHints: String?,
+                                   proposedTasks: [String]) throws -> String {
         let backlogURL = phaseURL.appendingPathComponent(CardStatus.backlog.folderName, isDirectory: true)
         let filename = "\(phaseNumber).0-phase-plan.md"
         let fileURL = backlogURL.appendingPathComponent(filename, isDirectory: false)
         let contents = renderPlanTemplate(phaseNumber: phaseNumber,
                                           phaseLabel: phaseLabel,
-                                          taskHints: taskHints)
-        try contents.write(to: fileURL, atomically: true, encoding: .utf8)
+                                          taskHints: taskHints,
+                                          proposedTasks: proposedTasks)
+        do {
+            try contents.write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            throw PhaseScaffoldingError.planWriteFailed(error.localizedDescription)
+        }
         return fileURL.path
     }
 
     private func renderPlanTemplate(phaseNumber: Int,
                                     phaseLabel: String,
-                                    taskHints: String?) -> String {
+                                    taskHints: String?,
+                                    proposedTasks: [String]) -> String {
         let code = "\(phaseNumber).0"
         var lines: [String] = [
             "---",
@@ -198,6 +215,17 @@ struct PhaseCreator {
 
         if let taskHints, !taskHints.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             lines.append(taskHints)
+            lines.append("")
+        }
+
+        if !proposedTasks.isEmpty {
+            lines.append("Proposed Tasks:")
+            for task in proposedTasks {
+                lines.append("- \(task)")
+            }
+            lines.append("")
+            lines.append("Rationale:")
+            lines.append("- Generated from provided seeds; refine before execution.")
             lines.append("")
         }
 
@@ -259,17 +287,41 @@ struct PhaseScaffoldingCommand {
         do {
             let options = try parse(arguments: arguments)
             let creator = PhaseCreator(fileManager: fileManager)
+            write("Phase scaffolding starting…")
+            write("Label: \(options.label)")
+            write("Project: \(options.projectRoot.path)")
+
             let result = try await creator.createPhase(at: options.projectRoot,
                                                        label: options.label,
                                                        seedPlan: options.seedPlan,
                                                        seedCardTitles: options.seedCardTitles,
-                                                       taskHints: options.taskHints)
+                                                       taskHints: options.taskHints,
+                                                       proposedTasks: options.proposedTasks)
+            for log in result.logs {
+                write("log: \(log)")
+            }
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             if let data = try? encoder.encode(result), let json = String(data: data, encoding: .utf8) {
                 write(json)
             }
             return Output(exitCode: 0, stdout: stdout, result: result)
+        } catch let error as PhaseScaffoldingError {
+            write("error: \(error.localizedDescription)")
+            let exit: Int
+            switch error {
+            case .phaseAlreadyExists:
+                exit = 2
+            case .missingProjectRoot:
+                exit = 3
+            case .emptyLabel:
+                exit = 4
+            case .planWriteFailed:
+                exit = 5
+            case .failedToCreate:
+                exit = 1
+            }
+            return Output(exitCode: exit, stdout: stdout, result: nil)
         } catch {
             write("error: \(error.localizedDescription)")
             return Output(exitCode: 1, stdout: stdout, result: nil)
@@ -284,6 +336,7 @@ struct PhaseScaffoldingCommand {
         var seedPlan = false
         var seedCardTitles: [String] = []
         var taskHints: String?
+        var proposedTasks: [String] = []
 
         var index = 0
         while index < arguments.count {
@@ -307,6 +360,10 @@ struct PhaseScaffoldingCommand {
                 index += 1
                 guard index < arguments.count else { throw PhaseScaffoldingError.emptyLabel }
                 taskHints = arguments[index]
+            case "--proposed-task":
+                index += 1
+                guard index < arguments.count else { throw PhaseScaffoldingError.emptyLabel }
+                proposedTasks.append(arguments[index])
             default:
                 break
             }
@@ -322,6 +379,7 @@ struct PhaseScaffoldingCommand {
                                        label: label,
                                        seedPlan: seedPlan,
                                        seedCardTitles: seedCardTitles,
-                                       taskHints: taskHints)
+                                       taskHints: taskHints,
+                                       proposedTasks: proposedTasks)
     }
 }
