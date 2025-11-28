@@ -1,6 +1,6 @@
 # Phase 5 Agent Architecture Overview
 
-Authoritative plan for the SwiftUI app + Codex XPC stack. Builds on `project/XPC_ARCHITECTURE.md` and pins process boundaries, capabilities, and telemetry required for Phase 5.
+Authoritative plan for the SwiftUI app + Codex XPC stack. Builds on `project/XPC_ARCHITECTURE.md` and pins process boundaries, capabilities, and telemetry required for Phase 5. Each acceptance criterion in card 5.1 is mapped to a concrete section below for auditability.
 
 ## Separation of Concerns
 - **Host App (SwiftUI, sandboxed)**
@@ -15,7 +15,7 @@ Authoritative plan for the SwiftUI app + Codex XPC stack. Builds on `project/XPC
   - Tracks launched worker job IDs for cancellation/backoff and reconnects if the app restarts.
 - **Worker Process (on-demand helper via SMAppService)**
   - Single responsibility: execute one Codex CLI task, stream output, then exit.
-  - Opens the project bookmark with `.withSecurityScope`, mounts a scoped temp directory for outputs, and trims environment to the minimum needed for Codex.
+  - Opens the project bookmark with `.withSecurityScope`, mounts a scoped temp directory for outputs, and trims environment to the minimum needed for Codex (default-deny networking unless explicitly enabled).
   - Establishes the returned `XPCEndpoint` back to the app; no direct file moves or status changes.
   - Emits structured logs/metrics and terminates immediately after completion or cancellation.
 
@@ -26,6 +26,13 @@ Authoritative plan for the SwiftUI app + Codex XPC stack. Builds on `project/XPC
 4. App streams logs/progress over XPC while the worker runs `codex exec --allow-files <scoped-project> --flow <flow> <card>`.
 5. On completion, worker sends `workerFinished(status, exitCode, summary, metrics)` and exits. Supervisor tears down the endpoint and releases the bookmark.
 6. Scheduler marks the card unlocked and advances the queue.
+
+### Permission & Capability Enforcement
+1. App stores only persistent bookmarks and passes them opaquely to `launchWorker`.
+2. Supervisor decodes the bookmark, verifies it resolves inside the app container or user-selected scope, and rejects missing/expired bookmarks before job launch.
+3. Supervisor inspects host + worker entitlements against the capability checklist below; launch is aborted on mismatch.
+4. Worker starts with a trimmed environment (`PATH`, `HOME`, `TMPDIR`, project bookmark, run token) and a scoped temp directory for outputs.
+5. All file access occurs under `startAccessingSecurityScopedResource`; attempts outside the scope are denied and logged.
 
 ## XPCEndpoint Contract (simplified)
 - `func streamLogs() -> AsyncThrowingStream<LogEvent, Error>`
@@ -69,3 +76,9 @@ Enforcement steps: supervisor validates entitlements at launch, drops any env ov
 - Define structured log schema (JSONLines) shared between supervisor and UI.
 - Add optional network client entitlement toggle when Codex needs remote model pulls.
 - Wire health pings into the XPCEndpoint to detect hung workers faster.
+
+## Acceptance Traceability (Card 5.1)
+- Separation of concerns between app, supervisor, and worker: see “Separation of Concerns.”
+- XPC worker runs Codex with controlled permissions and returns results via XPCEndpoint: see “Control & Data Flow” and “XPCEndpoint Contract.”
+- Security-scoped bookmarks handled for project access: see “Security-Scoped Bookmark Handling.”
+- Capability checklist enforced and per-run logs/metrics captured: see “Capability Sandbox Checklist” and “Logging & Metrics.”

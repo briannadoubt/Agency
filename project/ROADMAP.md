@@ -254,11 +254,11 @@ Agents operate only on markdown; the app controls all file movement. Agent execu
 
 ### Architecture Overview
 
-* **SwiftUI App (frontend)**: sandboxed UI, owns scheduler, state machine, renders cards.
-* **XPC Worker (backend)**: isolated process that runs Codex with filesystem access.
-* **Codex CLI**: modifies markdown + project files when allowed.
-* App uses XPC for every agent invocation: stable, world‑class, crash‑isolated.
-* Acceptance: capability sandbox checklist enforced; zero writes outside scoped dirs; per-run logs and metrics recorded.
+* **Host App (SwiftUI)**: sandboxed UI, owns scheduler/state, captures project bookmarks, talks only to supervisor.
+* **CodexSupervisor.xpc**: validates payload + entitlements, resolves bookmarks, launches workers via `SMAppService`, returns an `XPCEndpoint` to the app, and owns per-run log directories.
+* **Worker Job**: one-off helper that opens the bookmark with `.withSecurityScope`, runs `codex exec --allow-files <scoped root> ...`, streams logs via the endpoint, then exits.
+* **Codex CLI**: performs the requested agent flow inside the scoped project directory.
+* App/supervisor/worker chain enforces the capability checklist and captures per-run metrics; default-deny network unless explicitly toggled for model downloads.
 
 ### Agent Flow Mechanics
 
