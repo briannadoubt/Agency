@@ -101,4 +101,74 @@ final class PhaseCreatorTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertGreaterThanOrEqual(result.materializedCards.count + result.skippedTasks.count, 2)
     }
+
+    @MainActor
+    func testCreatesStatusDirectoriesAndGitkeep() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+
+        let project = root.appendingPathComponent("project")
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+
+        let creator = PhaseCreator(fileManager: fm)
+        let result = try await creator.createPhase(at: root,
+                                                   label: "Dirs Test",
+                                                   seedPlan: false)
+
+        let backlog = URL(fileURLWithPath: result.phasePath).appendingPathComponent("backlog/.gitkeep")
+        let inProgress = URL(fileURLWithPath: result.phasePath).appendingPathComponent("in-progress/.gitkeep")
+        let done = URL(fileURLWithPath: result.phasePath).appendingPathComponent("done/.gitkeep")
+
+        XCTAssertTrue(fm.fileExists(atPath: backlog.path))
+        XCTAssertTrue(fm.fileExists(atPath: inProgress.path))
+        XCTAssertTrue(fm.fileExists(atPath: done.path))
+    }
+
+    @MainActor
+    func testSecondRunCreatesNextPhaseNumber() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+
+        let project = root.appendingPathComponent("project")
+        let phase = project.appendingPathComponent("phase-1-existing")
+        try fm.createDirectory(at: phase, withIntermediateDirectories: true)
+        for status in CardStatus.allCases {
+            try fm.createDirectory(at: phase.appendingPathComponent(status.folderName, isDirectory: true),
+                                   withIntermediateDirectories: true)
+        }
+
+        let creator = PhaseCreator(fileManager: fm)
+        let first = try await creator.createPhase(at: root, label: "Existing")
+        XCTAssertEqual(first.phaseNumber, 2)
+        XCTAssertTrue(first.phasePath.contains("phase-2-existing"))
+    }
+
+    @MainActor
+    func testCLICommandCreatesNextPhaseWhenExistingPresent() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+        let project = root.appendingPathComponent("project")
+        let phase = project.appendingPathComponent("phase-1-existing")
+        try fm.createDirectory(at: phase.appendingPathComponent(CardStatus.backlog.folderName),
+                               withIntermediateDirectories: true)
+        try fm.createDirectory(at: phase.appendingPathComponent(CardStatus.inProgress.folderName),
+                               withIntermediateDirectories: true)
+        try fm.createDirectory(at: phase.appendingPathComponent(CardStatus.done.folderName),
+                               withIntermediateDirectories: true)
+
+        let command = PhaseScaffoldingCommand()
+        let output = await command.run(arguments: [
+            "--project-root", root.path,
+            "--label", "Existing",
+            "--seed-plan"
+        ], fileManager: fm)
+
+        XCTAssertEqual(output.exitCode, 0)
+        let result = try XCTUnwrap(output.result)
+        XCTAssertEqual(result.phaseNumber, 2)
+        XCTAssertTrue(result.phasePath.contains("phase-2-existing"))
+    }
 }

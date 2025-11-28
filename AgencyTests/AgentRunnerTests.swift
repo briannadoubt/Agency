@@ -118,6 +118,38 @@ final class AgentRunnerTests: XCTestCase {
     }
 
     @MainActor
+    func testPlanFlowStreamsLogsAndProgress() async throws {
+        let (card, tempRoot) = try makeCard()
+        let executor = StubPlanExecutor(events: [
+            .progress(0.2, message: "starting"),
+            .log("halfway"),
+            .progress(0.5, message: "processing"),
+            .finished(WorkerRunResult(status: .succeeded,
+                                      exitCode: 0,
+                                      duration: 0.2,
+                                      bytesRead: 0,
+                                      bytesWritten: 0,
+                                      summary: "done"))
+        ])
+        let runner = AgentRunner(executors: [.cli: executor])
+
+        let start = await runner.startRun(card: card, flow: .plan, backend: .cli)
+        guard case .success = start else {
+            XCTFail("Run failed to start")
+            return
+        }
+
+        let finished = await waitFor(runner.state(for: card)?.phase == .succeeded)
+        XCTAssertTrue(finished)
+        let state = runner.state(for: card)
+        XCTAssertEqual(state?.progress ?? 0, 1.0, accuracy: 0.001)
+        XCTAssertTrue(state?.logs.contains("halfway") ?? false)
+        XCTAssertEqual(state?.result?.status, .succeeded)
+
+        try FileManager.default.removeItem(at: tempRoot)
+    }
+
+    @MainActor
     private func makeCard() throws -> (Card, URL) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let phase = root.appendingPathComponent("project/phase-0-test")
@@ -162,5 +194,22 @@ final class AgentRunnerTests: XCTestCase {
             try? await Task.sleep(nanoseconds: pollIntervalMs * 1_000_000)
         }
         return condition()
+    }
+}
+
+private final class StubPlanExecutor: AgentExecutor {
+    let events: [WorkerLogEvent]
+
+    init(events: [WorkerLogEvent]) {
+        self.events = events
+    }
+
+    func run(request: CodexRunRequest,
+             logURL: URL,
+             outputDirectory: URL,
+             emit: @escaping @Sendable (WorkerLogEvent) async -> Void) async {
+        for event in events {
+            await emit(event)
+        }
     }
 }

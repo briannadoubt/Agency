@@ -10,32 +10,42 @@ import XCTest
 final class AgencyUITests: XCTestCase {
 
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
-        // In UI tests it is usually best to stop immediately when a failure occurs.
         continueAfterFailure = false
-
-        // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
-    }
-
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
     }
 
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testAddPhaseWithAgentCreatesPlanCard() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let project = root.appendingPathComponent("project")
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        for name in ["backlog", "in-progress", "done"] {
+            let dir = project.appendingPathComponent("phase-0-seed/\(name)", isDirectory: true)
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            fm.createFile(atPath: dir.appendingPathComponent(".gitkeep").path, contents: Data())
+        }
+
         let app = XCUIApplication()
+        app.launchEnvironment["UITEST_PROJECT_PATH"] = root.path
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-    }
+        let addButton = app.buttons["Add phase with agent"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5))
+        addButton.tap()
 
-    @MainActor
-    func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
-        measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
-        }
+        let labelField = app.textFields["Phase label"]
+        XCTAssertTrue(labelField.waitForExistence(timeout: 2))
+        labelField.tap()
+        labelField.typeText("UI Flow")
+
+        let startButton = app.buttons["Start plan flow"]
+        XCTAssertTrue(startButton.waitForExistence(timeout: 1))
+        startButton.tap()
+
+        let phaseRow = app.staticTexts["Phase 1: ui-flow"]
+        XCTAssertTrue(phaseRow.waitForExistence(timeout: 10), "Phase row did not appear")
+
+        let planCard = app.staticTexts.containing(NSPredicate(format: "label CONTAINS '1.0'")).firstMatch
+        XCTAssertTrue(planCard.waitForExistence(timeout: 5))
     }
 }

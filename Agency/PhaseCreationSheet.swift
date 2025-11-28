@@ -285,3 +285,55 @@ private struct PhaseErrorBanner: View {
             .stroke(DesignTokens.Colors.stroke, lineWidth: 1))
     }
 }
+
+#if DEBUG
+struct PhaseCreationSheet_Previews: PreviewProvider {
+    @MainActor
+    static var previews: some View {
+        let controller = PhaseCreationController(executor: StubPreviewExecutor(),
+                                                 cardCreator: CardCreator(),
+                                                 scanner: ProjectScanner())
+        controller.form.label = "Preview Phase"
+        controller.form.taskHints = "Add tasks for preview"
+        controller.pendingPlanTasks = [
+            PlanTask(title: "Wire previews",
+                     acceptanceCriteria: ["Show running state", "Show success state"],
+                     rationale: "Preview data")
+        ]
+        controller.runState = PhaseCreationController.RunState(id: UUID(),
+                                                               phase: .running,
+                                                               progress: 0.4,
+                                                               logs: ["Queued phase creation", "Running…"],
+                                                               summary: "Working",
+                                                               result: nil,
+                                                               startedAt: .now,
+                                                               finishedAt: nil)
+
+        let phase = try! Phase(path: URL(fileURLWithPath: "/tmp/project/phase-1-preview"))
+        let snapshot = ProjectLoader.ProjectSnapshot(rootURL: URL(fileURLWithPath: "/tmp"),
+                                                     phases: [PhaseSnapshot(phase: phase, cards: [])],
+                                                     validationIssues: [])
+
+        return PhaseCreationSheet(controller: controller,
+                                  snapshot: snapshot,
+                                  onCancel: {},
+                                  onComplete: { _ in })
+        .frame(width: 640, height: 520)
+    }
+
+    private final class StubPreviewExecutor: AgentExecutor {
+        func run(request: CodexRunRequest,
+                 logURL: URL,
+                 outputDirectory: URL,
+                 emit: @escaping @Sendable (WorkerLogEvent) async -> Void) async {
+            await emit(.progress(0.4, message: "Previewing…"))
+            await emit(.finished(WorkerRunResult(status: .succeeded,
+                                                 exitCode: 0,
+                                                 duration: 0.5,
+                                                 bytesRead: 0,
+                                                 bytesWritten: 0,
+                                                 summary: "Preview done")))
+        }
+    }
+}
+#endif

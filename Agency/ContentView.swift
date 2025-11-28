@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var isShowingPhaseCreator = false
     @State private var selectedPhaseNumber: Int?
     @State private var importError: String?
+    @State private var didAutoLoadProject = false
 
     init() {
         let loader = ProjectLoader()
@@ -119,7 +120,15 @@ struct ContentView: View {
                                })
         }
         .task {
-            loader.restoreBookmarkIfAvailable()
+            guard !didAutoLoadProject else { return }
+            didAutoLoadProject = true
+
+            if let path = ProcessInfo.processInfo.environment["UITEST_PROJECT_PATH"],
+               !path.isEmpty {
+                loader.loadProject(at: URL(fileURLWithPath: path))
+            } else {
+                loader.restoreBookmarkIfAvailable()
+            }
         }
         .onChange(of: loader.loadedSnapshot) { _, snapshot in
             guard selectedPhaseNumber == nil,
