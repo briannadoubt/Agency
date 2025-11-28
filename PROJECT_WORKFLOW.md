@@ -23,6 +23,7 @@
 - Filename prefix `<phase>.<task>` is the canonical card code
 - The Markdown file is the single source of truth for a card
 - Agents (via Codex) edit Markdown content and frontmatter only; they do not move files automatically
+- Agent-driven phase creation (Phase 6): the “Add Phase (with Agent…)” flow scaffolds `phase-N-<label>` with `backlog/N.0-phase-plan.md` plan artifact. Disable via `AGENCY_DISABLE_PLAN_FLOW=1` if needed.
 
 ## Directory Layout
 ```

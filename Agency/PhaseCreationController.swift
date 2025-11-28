@@ -60,6 +60,11 @@ final class PhaseCreationController {
     }
 
     func startCreation(projectSnapshot: ProjectLoader.ProjectSnapshot) async -> Bool {
+        guard FeatureFlags.planFlowEnabled else {
+            errorMessage = "Phase creation is disabled via AGENCY_DISABLE_PLAN_FLOW."
+            return false
+        }
+
         let trimmedLabel = form.label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedLabel.isEmpty else {
             errorMessage = "Phase label is required."

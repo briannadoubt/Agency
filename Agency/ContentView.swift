@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var selectedPhaseNumber: Int?
     @State private var importError: String?
     @State private var didAutoLoadProject = false
+    @State private var planFlowEnabled = FeatureFlags.planFlowEnabled
 
     init() {
         let loader = ProjectLoader()
@@ -31,11 +32,15 @@ struct ContentView: View {
                     }
 
                     Button {
+                        guard planFlowEnabled else {
+                            importError = "Phase creation is disabled via AGENCY_DISABLE_PLAN_FLOW."
+                            return
+                        }
                         isShowingPhaseCreator = true
                     } label: {
                         Label("Add Phase (with Agent…)", systemImage: "sparkles")
                     }
-                    .disabled(loader.loadedSnapshot == nil)
+                    .disabled(loader.loadedSnapshot == nil || !planFlowEnabled)
                     .accessibilityLabel("Add phase with agent")
 
                     if let snapshot = loader.loadedSnapshot {
@@ -81,7 +86,13 @@ struct ContentView: View {
             DetailView(loader: loader,
                        snapshot: loader.loadedSnapshot,
                        selectedPhaseNumber: $selectedPhaseNumber,
-                       onAddPhase: { isShowingPhaseCreator = true })
+                       onAddPhase: {
+                           guard planFlowEnabled else {
+                               importError = "Phase creation is disabled via AGENCY_DISABLE_PLAN_FLOW."
+                               return
+                           }
+                           isShowingPhaseCreator = true
+                       })
         }
         .navigationTitle(Text("Agency"))
         .environment(agentRunner)
