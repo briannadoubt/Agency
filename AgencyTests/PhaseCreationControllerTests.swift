@@ -54,7 +54,7 @@ final class PhaseCreationControllerTests: XCTestCase {
         XCTAssertTrue(request.cliArgs.contains("--seed-plan"))
         XCTAssertTrue(request.cliArgs.contains("Agent Planning"))
         XCTAssertTrue(request.cliArgs.contains("Seed a plan"))
-        XCTAssertTrue(request.cliArgs.contains("Auto-create cards from plan (requested)"))
+        XCTAssertTrue(request.cliArgs.contains("--auto-create-cards"))
         XCTAssertEqual(controller.runState?.phase, .succeeded)
         XCTAssertEqual(controller.runState?.logs.contains("starting"), true)
     }

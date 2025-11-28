@@ -44,9 +44,13 @@ actor CardCreator {
     /// - Parameters:
     ///   - phaseSnapshot: Phase context (cards are used to compute the next task number).
     ///   - title: User-provided title that feeds the slug and heading.
+    ///   - acceptanceCriteria: Optional checklist items to prefill the card.
+    ///   - notes: Optional notes text to seed the Notes section.
     ///   - includeHistoryEntry: Whether to seed the History section with a creation entry.
     func createCard(in phaseSnapshot: PhaseSnapshot,
                     title: String,
+                    acceptanceCriteria: [String] = [],
+                    notes: String? = nil,
                     includeHistoryEntry: Bool = true) async throws -> Card {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { throw CardCreationError.emptyTitle }
@@ -70,6 +74,8 @@ actor CardCreator {
         let fileURL = backlogURL.appendingPathComponent(filename, isDirectory: false)
         let contents = renderTemplate(code: code,
                                       title: trimmedTitle,
+                                      acceptanceCriteria: acceptanceCriteria,
+                                      notes: notes,
                                       includeHistoryEntry: includeHistoryEntry)
 
         do {
@@ -122,6 +128,8 @@ actor CardCreator {
 
     private func renderTemplate(code: String,
                                 title: String,
+                                acceptanceCriteria: [String],
+                                notes: String?,
                                 includeHistoryEntry: Bool) -> String {
         var lines: [String] = [
             "---",
@@ -138,14 +146,30 @@ actor CardCreator {
             "Summary:",
             "",
             "Acceptance Criteria:",
-            "- [ ] ",
-            "",
-            "Notes:",
-            "",
+        ]
+
+        if acceptanceCriteria.isEmpty {
+            lines.append(contentsOf: [
+                "- [ ] ",
+                ""
+            ])
+        } else {
+            for criterion in acceptanceCriteria {
+                lines.append("- [ ] \(criterion)")
+            }
+            lines.append("")
+        }
+
+        lines.append("Notes:")
+        if let notes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines.append(notes)
+        }
+        lines.append("")
+        lines.append(contentsOf: [
             "Alignment:",
             "",
             "History:"
-        ]
+        ])
 
         if includeHistoryEntry {
             let formatter = DateFormatter()

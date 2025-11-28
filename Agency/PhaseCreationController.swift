@@ -24,14 +24,25 @@ final class PhaseCreationController {
     var form = Form()
     var runState: RunState?
     var errorMessage: String?
+    var pendingPlanTasks: [PlanTask] = []
+    var lastPlanPath: URL?
+    var lastPhaseURL: URL?
+    var lastPlanTasks: [PlanTask] = []
+    var isMaterializingCards: Bool = false
 
     private let executor: any AgentExecutor
     private let fileManager: FileManager
+    private let cardCreator: CardCreator
+    private let scanner: ProjectScanner
 
     init(executor: any AgentExecutor = CLIPhaseExecutor(),
-         fileManager: FileManager = .default) {
+         fileManager: FileManager = .default,
+         cardCreator: CardCreator = CardCreator(),
+         scanner: ProjectScanner = ProjectScanner()) {
         self.executor = executor
         self.fileManager = fileManager
+        self.cardCreator = cardCreator
+        self.scanner = scanner
     }
 
     var isRunning: Bool {
@@ -53,6 +64,10 @@ final class PhaseCreationController {
 
         guard !isRunning else { return false }
         errorMessage = nil
+        pendingPlanTasks = []
+        lastPlanPath = nil
+        lastPhaseURL = nil
+        lastPlanTasks = []
 
         let hints = form.taskHints.trimmingCharacters(in: .whitespacesAndNewlines)
         let runID = UUID()
@@ -102,6 +117,7 @@ final class PhaseCreationController {
 
             let phase = runState?.phase
             if phase == .succeeded {
+                refreshPlanContext(projectSnapshot: projectSnapshot, label: trimmedLabel)
                 resetForm()
                 return true
             } else if phase == .failed {
@@ -156,6 +172,122 @@ final class PhaseCreationController {
         runState = state
     }
 
+    func createCardsFromPlan(projectSnapshot: ProjectLoader.ProjectSnapshot) async {
+        guard !isRunning, !isMaterializingCards else { return }
+        guard let phaseURL = lastPhaseURL else {
+            errorMessage = "No phase plan available to materialize."
+            return
+        }
+        guard !pendingPlanTasks.isEmpty else {
+            errorMessage = "All plan tasks already have cards."
+            return
+        }
+
+        isMaterializingCards = true
+        defer { isMaterializingCards = false }
+
+        do {
+            let snapshots = try scanner.scan(rootURL: projectSnapshot.rootURL)
+            guard let phaseSnapshot = snapshots.first(where: { $0.phase.path.standardizedFileURL == phaseURL.standardizedFileURL }) else {
+                errorMessage = "Phase directory not found on disk."
+                return
+            }
+
+            var workingSnapshot = phaseSnapshot
+            var createdTitles: [String] = []
+            var skippedTitles: [String] = []
+
+            for task in pendingPlanTasks {
+                do {
+                    let card = try await cardCreator.createCard(in: workingSnapshot,
+                                                                title: task.title,
+                                                                acceptanceCriteria: task.acceptanceCriteria,
+                                                                notes: task.rationale,
+                                                                includeHistoryEntry: true)
+                    workingSnapshot = PhaseSnapshot(phase: workingSnapshot.phase,
+                                                    cards: workingSnapshot.cards + [card])
+                    createdTitles.append(task.title)
+                } catch let error as CardCreationError {
+                    if case .duplicateFilename = error {
+                        skippedTitles.append(task.title)
+                        continue
+                    }
+                    throw error
+                }
+            }
+
+            pendingPlanTasks = try pendingTasks(from: lastPlanTasks,
+                                                projectRoot: projectSnapshot.rootURL,
+                                                phaseURL: phaseURL)
+
+            if var state = runState {
+                state.logs.append("Created \(createdTitles.count) cards from plan via UI.")
+                if !skippedTitles.isEmpty {
+                    state.logs.append("Skipped \(skippedTitles.count) tasks due to duplicates.")
+                }
+                runState = state
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func refreshPlanContext(projectSnapshot: ProjectLoader.ProjectSnapshot, label: String) {
+        guard let planURL = locatePlanArtifact(projectRoot: projectSnapshot.rootURL, label: label) else { return }
+        lastPlanPath = planURL
+        lastPhaseURL = planURL.deletingLastPathComponent().deletingLastPathComponent()
+
+        do {
+            let artifact = try PlanArtifact.load(from: planURL)
+            lastPlanTasks = artifact.tasks
+            pendingPlanTasks = try pendingTasks(from: artifact.tasks,
+                                                projectRoot: projectSnapshot.rootURL,
+                                                phaseURL: lastPhaseURL)
+
+            if var state = runState {
+                state.logs.append("Plan contains \(artifact.tasks.count) task(s); \(pendingPlanTasks.count) without cards.")
+                runState = state
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func locatePlanArtifact(projectRoot: URL, label: String) -> URL? {
+        let projectURL = projectRoot.appendingPathComponent(ProjectConventions.projectRootName, isDirectory: true)
+        let targetSlug = slug(from: label)
+        guard let contents = try? fileManager.contentsOfDirectory(at: projectURL,
+                                                                  includingPropertiesForKeys: [.isDirectoryKey],
+                                                                  options: [.skipsHiddenFiles]) else { return nil }
+
+        let candidates = contents.compactMap { url -> (Phase, URL)? in
+            guard let phase = try? Phase(path: url), url.lastPathComponent.hasSuffix(targetSlug) else { return nil }
+            return (phase, url)
+        }.sorted { lhs, rhs in lhs.0.number < rhs.0.number }
+
+        for (phase, url) in candidates.reversed() {
+            let planURL = url
+                .appendingPathComponent(CardStatus.backlog.folderName, isDirectory: true)
+                .appendingPathComponent("\(phase.number).0-phase-plan.md")
+            if fileManager.fileExists(atPath: planURL.path) {
+                return planURL
+            }
+        }
+
+        return nil
+    }
+
+    private func pendingTasks(from tasks: [PlanTask],
+                              projectRoot: URL,
+                              phaseURL: URL?) throws -> [PlanTask] {
+        guard let phaseURL else { return tasks }
+        let snapshots = try scanner.scan(rootURL: projectRoot)
+        let phaseSnapshot = snapshots.first { $0.phase.path.standardizedFileURL == phaseURL.standardizedFileURL }
+        let existingSlugs: Set<String> = Set(phaseSnapshot?.cards.map(\.slug) ?? [])
+
+        return tasks.filter { !existingSlugs.contains(slug(from: $0.title)) }
+    }
+
     private func bookmark(for url: URL) throws -> Data {
         try url.standardizedFileURL.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
                                                  includingResourceValuesForKeys: nil,
@@ -176,10 +308,8 @@ final class PhaseCreationController {
             args.append(contentsOf: ["--task-hints", taskHints])
         }
 
-        args.append(contentsOf: ["--proposed-task", "Requested via UI plan flow"])
-
         if autoCreateCards {
-            args.append(contentsOf: ["--proposed-task", "Auto-create cards from plan (requested)"])
+            args.append("--auto-create-cards")
         }
 
         return args

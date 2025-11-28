@@ -27,6 +27,10 @@ final class PhaseCreatorTests: XCTestCase {
         XCTAssertEqual(result.seededCards.count, 1, "seeded=\(result.seededCards)")
         if let planPath = result.planArtifact {
             XCTAssertTrue(FileManager.default.fileExists(atPath: planPath))
+            let contents = try String(contentsOfFile: planPath)
+            XCTAssertTrue(contents.contains("plan_version: 1"))
+            XCTAssertTrue(contents.contains("Plan Tasks (machine readable):"))
+            XCTAssertTrue(contents.contains("Kickoff"))
         }
     }
 
@@ -44,6 +48,7 @@ final class PhaseCreatorTests: XCTestCase {
             "--seed-plan",
             "--seed-card", "First",
             "--proposed-task", "Define CLI entrypoint",
+            "--auto-create-cards",
             "--task-hints", "User wants agent-guided phase creation"
         ], fileManager: fm)
 
@@ -55,6 +60,7 @@ final class PhaseCreatorTests: XCTestCase {
         let result = try XCTUnwrap(output.result)
         XCTAssertEqual(result.phaseNumber, 1)
         XCTAssertEqual(result.seededCards.count, 1)
+        XCTAssertGreaterThanOrEqual(result.materializedCards.count, 1)
         XCTAssertEqual(result.exitCode, 0)
     }
 
@@ -72,5 +78,27 @@ final class PhaseCreatorTests: XCTestCase {
         } catch {
             XCTFail("Unexpected error: \\(error)")
         }
+    }
+
+    @MainActor
+    func testAutoMaterializationSkipsDuplicatesGracefully() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+
+        let project = root.appendingPathComponent("project")
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+
+        let creator = PhaseCreator(fileManager: fm)
+        let result = try await creator.createPhase(at: root,
+                                                   label: "Dup Test",
+                                                   seedPlan: true,
+                                                   seedCardTitles: ["Kickoff"],
+                                                   taskHints: nil,
+                                                   proposedTasks: ["Kickoff", "Wire CLI"],
+                                                   autoCreateCards: true)
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertGreaterThanOrEqual(result.materializedCards.count + result.skippedTasks.count, 2)
     }
 }

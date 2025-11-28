@@ -29,6 +29,9 @@ struct PhaseCreationSheet: View {
             }
 
             PhaseRunStatusView(runState: controller.runState)
+            if shouldOfferMaterializationCTA {
+                materializationCTA
+            }
 
             footerButtons
         }
@@ -110,6 +113,27 @@ struct PhaseCreationSheet: View {
         }
     }
 
+    private var materializationCTA: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xSmall) {
+            Text("Create cards from plan")
+                .font(DesignTokens.Typography.caption.weight(.semibold))
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+            Button {
+                createCardsFromPlan()
+            } label: {
+                if controller.isMaterializingCards {
+                    ProgressView()
+                } else {
+                    Label("Create cards from plan (\(controller.pendingPlanTasks.count) pending)", systemImage: "rectangle.stack.badge.plus")
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(snapshot == nil || controller.pendingPlanTasks.isEmpty || controller.isMaterializingCards)
+            .accessibilityLabel("Create cards from plan")
+        }
+        .padding(.vertical, DesignTokens.Spacing.small)
+    }
+
     private func submit() {
         guard let snapshot else {
             controller.errorMessage = "Load a project before creating a phase."
@@ -122,6 +146,23 @@ struct PhaseCreationSheet: View {
                 onComplete(success)
             }
         }
+    }
+
+    private func createCardsFromPlan() {
+        guard let snapshot else {
+            controller.errorMessage = "Load a project before creating cards."
+            return
+        }
+
+        Task {
+            await controller.createCardsFromPlan(projectSnapshot: snapshot)
+        }
+    }
+
+    private var shouldOfferMaterializationCTA: Bool {
+        controller.runState?.phase == .succeeded &&
+        !controller.pendingPlanTasks.isEmpty &&
+        !controller.isRunning
     }
 }
 
