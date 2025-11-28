@@ -29,20 +29,24 @@ final class PhaseCreationController {
     var lastPhaseURL: URL?
     var lastPlanTasks: [PlanTask] = []
     var isMaterializingCards: Bool = false
+    var lastLogDirectory: URL?
 
     private let executor: any AgentExecutor
     private let fileManager: FileManager
     private let cardCreator: CardCreator
     private let scanner: ProjectScanner
+    private let logBaseDirectory: URL?
 
     init(executor: any AgentExecutor = CLIPhaseExecutor(),
          fileManager: FileManager = .default,
          cardCreator: CardCreator = CardCreator(),
-         scanner: ProjectScanner = ProjectScanner()) {
+         scanner: ProjectScanner = ProjectScanner(),
+         logBaseDirectory: URL? = nil) {
         self.executor = executor
         self.fileManager = fileManager
         self.cardCreator = cardCreator
         self.scanner = scanner
+        self.logBaseDirectory = logBaseDirectory
     }
 
     var isRunning: Bool {
@@ -71,9 +75,10 @@ final class PhaseCreationController {
 
         let hints = form.taskHints.trimmingCharacters(in: .whitespacesAndNewlines)
         let runID = UUID()
-        let logDirectory = fileManager.temporaryDirectory
+        let baseLogDir = logBaseDirectory ?? fileManager.temporaryDirectory
             .appendingPathComponent("phase-creation-runs", isDirectory: true)
-            .appendingPathComponent(runID.uuidString, isDirectory: true)
+        let logDirectory = baseLogDir.appendingPathComponent(runID.uuidString, isDirectory: true)
+        lastLogDirectory = logDirectory
 
         let bookmarkData: Data
         do {
@@ -99,6 +104,7 @@ final class PhaseCreationController {
         do {
             let directories = try RunDirectories.prepare(for: request, fileManager: fileManager)
             let logURL = directories.logDirectory.appendingPathComponent("worker.log")
+            let runLogDirectory = directories.logDirectory
 
             runState = RunState(id: runID,
                                 phase: .queued,
@@ -119,13 +125,17 @@ final class PhaseCreationController {
             if phase == .succeeded {
                 refreshPlanContext(projectSnapshot: projectSnapshot, label: trimmedLabel)
                 resetForm()
+                cleanupRunArtifacts(at: runLogDirectory, phase: .succeeded)
                 return true
+            } else if phase == .canceled {
+                cleanupRunArtifacts(at: runLogDirectory, phase: .canceled)
             } else if phase == .failed {
                 if let summary = runState?.summary, !summary.isEmpty {
                     errorMessage = summary
                 } else {
                     errorMessage = "Phase creation failed."
                 }
+                cleanupRunArtifacts(at: runLogDirectory, phase: .failed)
             }
 
             return false
@@ -286,6 +296,26 @@ final class PhaseCreationController {
         let existingSlugs: Set<String> = Set(phaseSnapshot?.cards.map(\.slug) ?? [])
 
         return tasks.filter { !existingSlugs.contains(slug(from: $0.title)) }
+    }
+
+    private func cleanupRunArtifacts(at logDirectory: URL, phase: AgentRunPhase) {
+        let outputDirectory = logDirectory.appendingPathComponent("tmp", isDirectory: true)
+        try? fileManager.removeItem(at: outputDirectory)
+
+        let keepLogs = (phase == .failed)
+        if keepLogs {
+            appendLog("Cleanup complete; logs retained at \(logDirectory.path)")
+        } else {
+            appendLog("Cleanup complete; removing run logs at \(logDirectory.lastPathComponent)")
+            try? fileManager.removeItem(at: logDirectory)
+        }
+    }
+
+    private func appendLog(_ message: String) {
+        if var state = runState {
+            state.logs.append(message)
+            runState = state
+        }
     }
 
     private func bookmark(for url: URL) throws -> Data {

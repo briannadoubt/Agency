@@ -94,8 +94,12 @@ struct PhaseCreator {
         var logs: [String] = []
         logs.append("Creating phase \(phaseName)")
 
+        var createdPhaseURL: URL?
+
         do {
             try fileManager.createDirectory(at: phaseURL, withIntermediateDirectories: true)
+            createdPhaseURL = phaseURL
+
             let statusURLs = try createStatusFolders(at: phaseURL)
             logs.append("Created status folders: \(statusURLs.map { $0.lastPathComponent }.joined(separator: ", "))")
 
@@ -158,8 +162,20 @@ struct PhaseCreator {
                                           logs: logs,
                                           exitCode: 0)
         } catch let error as PhaseScaffoldingError {
+            if let createdPhaseURL {
+                try? fileManager.removeItem(at: createdPhaseURL)
+                let message = "cleanup: removed \(createdPhaseURL.lastPathComponent) after failure."
+                logs.append(message)
+                fputs(message + "\n", stderr)
+            }
             throw error
         } catch {
+            if let createdPhaseURL {
+                try? fileManager.removeItem(at: createdPhaseURL)
+                let message = "cleanup: removed \(createdPhaseURL.lastPathComponent) after failure."
+                logs.append(message)
+                fputs(message + "\n", stderr)
+            }
             throw PhaseScaffoldingError.failedToCreate(error.localizedDescription)
         }
     }
