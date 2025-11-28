@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @State private var loader = ProjectLoader()
+    @State private var agentRunner = AgentRunner()
     @State private var showingImporter = false
     @State private var selectedPhaseNumber: Int?
     @State private var importError: String?
@@ -65,6 +66,7 @@ struct ContentView: View {
                        selectedPhaseNumber: $selectedPhaseNumber)
         }
         .navigationTitle(Text("Agency"))
+        .environment(agentRunner)
         .fileImporter(isPresented: $showingImporter,
                       allowedContentTypes: [.folder],
                       allowsMultipleSelection: false) { result in
@@ -888,27 +890,21 @@ private struct CardTile: View {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else { return Text(text) }
 
-        var result = Text("")
-        var searchStart = text.startIndex
+        var attributed = AttributedString(text)
+        let lowercased = text.lowercased()
+        let needle = trimmedQuery.lowercased()
+        var searchStart = lowercased.startIndex
 
-        while searchStart < text.endIndex,
-              let range = text.range(of: trimmedQuery, options: [.caseInsensitive], range: searchStart..<text.endIndex) {
-            if range.lowerBound > searchStart {
-                result = result + Text(String(text[searchStart..<range.lowerBound]))
+        while let range = lowercased.range(of: needle, options: [], range: searchStart..<lowercased.endIndex) {
+            if let start = AttributedString.Index(range.lowerBound, within: attributed),
+               let end = AttributedString.Index(range.upperBound, within: attributed) {
+                attributed[start..<end].foregroundColor = accentColor
+                attributed[start..<end].font = .system(.body, design: .default).weight(.semibold)
             }
-
-            result = result + Text(String(text[range]))
-                .foregroundStyle(accentColor)
-                .fontWeight(.semibold)
-
             searchStart = range.upperBound
         }
 
-        if searchStart < text.endIndex {
-            result = result + Text(String(text[searchStart..<text.endIndex]))
-        }
-
-        return result
+        return Text(attributed)
     }
 
     private var accentColor: Color {

@@ -32,6 +32,7 @@ struct CardDetailModal: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(AgentRunner.self) private var agentRunner
     @State private var mode: CardDetailMode = .view
     @State private var snapshot: CardDocumentSnapshot?
     @State private var pendingRawSnapshot: CardDocumentSnapshot?
@@ -55,6 +56,8 @@ struct CardDetailModal: View {
     @State private var errorMessage: String?
     @State private var appendHistory = false
     @State private var skipRawRefreshOnce = false
+    @State private var selectedFlow: AgentFlow = .implement
+    @State private var agentError: String?
 
     private let pipeline = CardEditingPipeline.shared
     private let branchHelper = BranchHelper()
@@ -91,6 +94,10 @@ struct CardDetailModal: View {
         branchHelper.checkoutCommand(for: recommendedBranch)
     }
 
+    private var currentCard: Card {
+        snapshot?.card ?? card
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -124,6 +131,13 @@ struct CardDetailModal: View {
         .frame(minWidth: 860, minHeight: 640)
         .task {
             await loadSnapshot()
+        }
+        .alert("Agent error", isPresented: Binding(get: { agentError != nil }, set: { newValue in
+            if !newValue { agentError = nil }
+        })) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(agentError ?? "")
         }
         .onChange(of: mode) { oldValue, newValue in
             syncDraftsForModeChange(from: oldValue, to: newValue)
@@ -206,12 +220,29 @@ struct CardDetailModal: View {
                          isApplyingBranch: isApplyingBranch,
                          onCopyBranch: { copyBranchToPasteboard(recommendedBranch) },
                          onCopyCommand: { copyCheckoutCommand() },
-                         onApplyBranch: { Task { await applyRecommendedBranch() } })
+                         onApplyBranch: { Task { await applyRecommendedBranch() } },
+                         agentControls: agentControls)
         case .form:
             CardFormMode(formDraft: $formDraft)
         case .raw:
             CardRawMode(rawText: $rawDraft)
         }
+    }
+
+    @ViewBuilder
+    private var agentControls: some View {
+        AgentControlPanel(card: currentCard,
+                          selectedFlow: $selectedFlow,
+                          agentError: $agentError,
+                          onRun: { flow in
+                              await handleRun(flow: flow)
+                          },
+                          onCancel: { runID in
+                              agentRunner.cancel(runID: runID)
+                          },
+                          onReset: {
+                              await handleReset()
+                          })
     }
 
     private var footer: some View {
@@ -278,6 +309,7 @@ struct CardDetailModal: View {
                 branchPrefix = BranchHelper.normalizeSegment(preferredPrefix, fallback: "implement")
                 branchStatusMessage = nil
                 rawDraft = loaded.contents
+                selectedFlow = AgentFlow(rawValue: formDraft.agentFlow.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) ?? .implement
                 isLoading = false
             }
         } catch {
@@ -396,6 +428,30 @@ struct CardDetailModal: View {
         copyBranchToPasteboard(checkoutCommand)
     }
 
+    private func handleRun(flow: AgentFlow) async {
+        let result = await agentRunner.startRun(card: currentCard, flow: flow)
+        await MainActor.run {
+            switch result {
+            case .success:
+                agentError = nil
+                selectedFlow = flow
+            case .failure(let error):
+                agentError = error.localizedDescription
+            }
+        }
+    }
+
+    private func handleReset() async {
+        let result = await agentRunner.resetAgentState(for: currentCard)
+        await MainActor.run {
+            if case .failure(let error) = result {
+                agentError = error.localizedDescription
+            } else {
+                agentError = nil
+            }
+        }
+    }
+
     @MainActor
     private func applyRecommendedBranch() async {
         guard let snapshot else {
@@ -480,7 +536,7 @@ struct CardDetailModal: View {
     }
 }
 
-private struct CardViewMode: View {
+private struct CardViewMode<AgentControls: View>: View {
     @Binding var formDraft: CardDetailFormDraft
     let phase: Phase
     @Binding var branchPrefix: String
@@ -491,6 +547,7 @@ private struct CardViewMode: View {
     let onCopyBranch: () -> Void
     let onCopyCommand: () -> Void
     let onApplyBranch: () -> Void
+    let agentControls: AgentControls
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -506,6 +563,7 @@ private struct CardViewMode: View {
                                    onCopyBranch: onCopyBranch,
                                    onCopyCommand: onCopyCommand,
                                    onApplyBranch: onApplyBranch)
+                agentControls
                 MetadataGrid(formDraft: formDraft, phase: phase)
                 SummaryBlock(summary: $formDraft.summary)
                 CriteriaList(criteria: $formDraft.criteria, accentColor: accentColor)
@@ -518,6 +576,166 @@ private struct CardViewMode: View {
 
     private var accentColor: Color {
         DesignTokens.Colors.preferredAccent(for: colorScheme)
+    }
+
+}
+
+private struct AgentControlPanel: View {
+    let card: Card
+    @Binding var selectedFlow: AgentFlow
+    @Binding var agentError: String?
+    let onRun: (AgentFlow) async -> Void
+    let onCancel: (UUID) -> Void
+    let onReset: () async -> Void
+
+    @Environment(AgentRunner.self) private var agentRunner
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var runState: AgentRunState? {
+        agentRunner.state(for: card)
+    }
+
+    private var statusLabel: String {
+        if let runState {
+            return runState.phase.rawValue.capitalized
+        }
+        let status = card.frontmatter.agentStatus?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return status?.isEmpty == false ? status!.capitalized : "Idle"
+    }
+
+    private var isActive: Bool {
+        guard let runState else { return false }
+        return runState.phase == .queued || runState.phase == .running
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
+            HStack(spacing: DesignTokens.Spacing.small) {
+                Label("Agent", systemImage: "bolt.horizontal")
+                    .font(DesignTokens.Typography.headline)
+                Spacer()
+                Text(statusLabel)
+                    .font(DesignTokens.Typography.caption.weight(.semibold))
+                    .padding(.horizontal, DesignTokens.Spacing.small)
+                    .padding(.vertical, DesignTokens.Spacing.grid)
+                    .background(Capsule().fill(DesignTokens.Colors.preferredAccent(for: colorScheme).opacity(0.14)))
+            }
+
+            Picker("Flow", selection: $selectedFlow) {
+                ForEach(AgentFlow.allCases) { flow in
+                    Text(flow.label).tag(flow)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            HStack(spacing: DesignTokens.Spacing.small) {
+                if let runState, isActive {
+                    Button(role: .cancel) {
+                        onCancel(runState.id)
+                    } label: {
+                        Label("Cancel", systemImage: "xmark")
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    Button {
+                        Task { await onRun(selectedFlow) }
+                    } label: {
+                        Label("Run", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+
+                if runState != nil, !isActive {
+                    Button {
+                        Task { await onRun(selectedFlow) }
+                    } label: {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Button(role: .destructive) {
+                    Task { await onReset() }
+                } label: {
+                    Label("Reset", systemImage: "arrow.uturn.backward")
+                }
+                .buttonStyle(.bordered)
+                .disabled(isActive)
+            }
+
+            if let runState {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+                    ProgressView(value: runState.progress)
+                        .tint(DesignTokens.Colors.preferredAccent(for: colorScheme))
+                    if let summary = runState.summary {
+                        Text(summary)
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(DesignTokens.Colors.textSecondary)
+                    }
+                    if let result = runState.result {
+                        Text(resultDetailText(result))
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(DesignTokens.Colors.textSecondary)
+                    }
+                    AgentLogView(logs: runState.logs)
+                }
+            } else {
+                Text("Runs will stream here once started.")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+            }
+
+            if let agentError {
+                InlineErrorBanner(message: agentError) {
+                    self.agentError = nil
+                }
+            }
+        }
+        .padding()
+        .surfaceStyle(DesignTokens.Surfaces.mutedPanel)
+    }
+
+    private func resultDetailText(_ result: WorkerRunResult) -> String {
+        let formattedDuration: String
+        if result.duration >= 1 {
+            formattedDuration = String(format: "%.1fs", result.duration)
+        } else {
+            formattedDuration = String(format: "%.0fms", result.duration * 1000)
+        }
+
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        let read = formatter.string(fromByteCount: result.bytesRead)
+        let written = formatter.string(fromByteCount: result.bytesWritten)
+
+        return "Exit \(result.exitCode) • \(formattedDuration) • read \(read) / wrote \(written)"
+    }
+}
+
+private struct AgentLogView: View {
+    let logs: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.grid) {
+            Text("Logs")
+                .font(DesignTokens.Typography.caption.weight(.semibold))
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.grid) {
+                    ForEach(Array(logs.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(DesignTokens.Colors.textPrimary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(minHeight: 120, maxHeight: 200)
+            .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.small).fill(DesignTokens.Colors.surface))
+            .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.small).stroke(DesignTokens.Colors.stroke))
+        }
     }
 }
 

@@ -13,6 +13,7 @@ struct CodexWorkerRuntime {
     private let logger = Logger(subsystem: "dev.agency.worker", category: "runtime")
 
     func run() async {
+        let start = Date()
         do {
             let sandbox = WorkerSandbox(projectBookmark: payload.projectBookmark,
                                         outputDirectory: outputDirectory)
@@ -27,19 +28,51 @@ struct CodexWorkerRuntime {
                                "output": outputDirectory.path,
                                "bookmarkStale": "\(project.bookmarkWasStale)"])
 
-            // In the real helper this is where Codex CLI would run. Here we simulate fast completion.
-            try await Task.sleep(for: .milliseconds(10))
+            let steps = 6
+            for step in 1...steps {
+                try Task.checkCancellation()
+                try await Task.sleep(for: .milliseconds(25))
+                let progress = Double(step) / Double(steps)
+                try record(event: "progress",
+                           extra: ["percent": String(progress),
+                                   "message": "Step \(step)/\(steps)"])
+            }
 
+            let durationMs = Int(Date().timeIntervalSince(start) * 1000)
             try record(event: "workerFinished",
                        extra: ["status": WorkerRunResult.Status.succeeded.rawValue,
-                               "card": payload.cardRelativePath])
+                               "card": payload.cardRelativePath,
+                               "summary": "Completed \(payload.flow) flow",
+                               "durationMs": String(durationMs),
+                               "exitCode": "0",
+                               "bytesRead": "0",
+                               "bytesWritten": "0"])
+        } catch is CancellationError {
+            let durationMs = Int(Date().timeIntervalSince(start) * 1000)
+            do {
+                try record(event: "workerFinished",
+                           extra: ["status": WorkerRunResult.Status.canceled.rawValue,
+                                   "card": payload.cardRelativePath,
+                                   "summary": "Canceled",
+                                   "durationMs": String(durationMs),
+                                   "exitCode": "1",
+                                   "bytesRead": "0",
+                                   "bytesWritten": "0"])
+            } catch {
+                logger.error("Unable to record cancellation: \(error.localizedDescription)")
+            }
         } catch {
             logger.error("Worker runtime failed: \(error.localizedDescription)")
+            let durationMs = Int(Date().timeIntervalSince(start) * 1000)
             do {
                 try record(event: "workerFinished",
                            extra: ["status": WorkerRunResult.Status.failed.rawValue,
                                    "card": payload.cardRelativePath,
-                                   "error": error.localizedDescription])
+                                   "summary": error.localizedDescription,
+                                   "durationMs": String(durationMs),
+                                   "exitCode": "1",
+                                   "bytesRead": "0",
+                                   "bytesWritten": "0"])
             } catch {
                 logger.error("Unable to record failure event: \(error.localizedDescription)")
             }
