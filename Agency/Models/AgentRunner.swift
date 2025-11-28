@@ -119,7 +119,7 @@ final class AgentRunner {
         var registry = executors
         // Provide defaults so UI works without configuration.
         registry[.simulated] = registry[.simulated] ?? SimulatedAgentExecutor()
-        registry[.codex] = registry[.codex] ?? SimulatedAgentExecutor() // placeholder until real Codex wiring is active
+        registry[.codex] = registry[.codex] ?? CodexAgentExecutor()
         registry[.cli] = registry[.cli] ?? CLIPhaseExecutor()
         self.executors = registry
     }
