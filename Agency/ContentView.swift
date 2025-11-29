@@ -505,7 +505,7 @@ private struct PhaseDetail: View {
             if let selectedCard {
                 CardDetailModal(card: selectedCard,
                                 phase: phase.phase)
-                    .presentationDetents([.large])
+                    .presentationDetents([.fraction(0.96)])
             }
         }
         .sheet(isPresented: $isPresentingCreateSheet) {

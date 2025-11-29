@@ -59,6 +59,7 @@ struct CardDetailModal: View {
     @State private var selectedFlow: AgentFlow = .implement
     @State private var agentError: String?
     @State private var externalChangePending = false
+    @State private var chatFilter: AgentChatMessage.Role?
 
     private let pipeline = CardEditingPipeline.shared
     private let branchHelper = BranchHelper()
@@ -137,7 +138,12 @@ struct CardDetailModal: View {
 
             footer
         }
-        .frame(minWidth: 860, minHeight: 640)
+        .frame(minWidth: 1300,
+               idealWidth: 1400,
+               maxWidth: .infinity,
+               minHeight: 900,
+               idealHeight: 1000,
+               maxHeight: .infinity)
         .task {
             await loadSnapshot()
         }
@@ -223,7 +229,8 @@ struct CardDetailModal: View {
     private var content: some View {
         switch mode {
         case .view:
-            CardViewMode(formDraft: $formDraft,
+            CardViewMode(card: currentCard,
+                         formDraft: $formDraft,
                          phase: phase,
                          branchPrefix: $branchPrefix,
                          recommendedBranch: recommendedBranch,
@@ -233,7 +240,8 @@ struct CardDetailModal: View {
                          onCopyBranch: { copyBranchToPasteboard(recommendedBranch) },
                          onCopyCommand: { copyCheckoutCommand() },
                          onApplyBranch: { Task { await applyRecommendedBranch() } },
-                         agentControls: agentControls)
+                         agentControls: agentControls,
+                         chatFilter: $chatFilter)
         case .form:
             CardFormMode(formDraft: $formDraft)
         case .raw:
@@ -576,6 +584,7 @@ struct CardDetailModal: View {
 }
 
 private struct CardViewMode<AgentControls: View>: View {
+    let card: Card
     @Binding var formDraft: CardDetailFormDraft
     let phase: Phase
     @Binding var branchPrefix: String
@@ -587,29 +596,38 @@ private struct CardViewMode<AgentControls: View>: View {
     let onCopyCommand: () -> Void
     let onApplyBranch: () -> Void
     let agentControls: AgentControls
+    @Binding var chatFilter: AgentChatMessage.Role?
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(AgentRunner.self) private var agentRunner
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.large) {
-                BranchHelperPanel(formDraft: formDraft,
-                                   branchPrefix: $branchPrefix,
-                                   recommendedBranch: recommendedBranch,
-                                   checkoutCommand: checkoutCommand,
-                                   statusMessage: branchStatusMessage,
-                                   isApplying: isApplyingBranch,
-                                   onCopyBranch: onCopyBranch,
-                                   onCopyCommand: onCopyCommand,
-                                   onApplyBranch: onApplyBranch)
-                agentControls
-                MetadataGrid(formDraft: formDraft, phase: phase)
-                SummaryBlock(summary: $formDraft.summary)
-                CriteriaList(criteria: $formDraft.criteria, accentColor: accentColor)
-                NotesBlock(notes: $formDraft.notes, accentColor: accentColor)
-                AttachmentsCommentsBlock()
-                HistoryTimeline(history: formDraft.history, accentColor: accentColor)
+        GeometryReader { proxy in
+            let spacing = DesignTokens.Spacing.large
+            let availableWidth = max(proxy.size.width, 720)
+            let sidebarWidth = max(340, availableWidth * 0.32)
+            let contentWidth = max(520, availableWidth - sidebarWidth - spacing)
+            let columnHeight = proxy.size.height - (DesignTokens.Spacing.large * 2)
+
+            HStack(alignment: .top, spacing: spacing) {
+                ScrollView(.vertical) {
+                    contentColumn
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(.vertical, DesignTokens.Spacing.large)
+                }
+                .frame(width: contentWidth, height: columnHeight, alignment: .topLeading)
+
+                ScrollView(.vertical) {
+                    AgentContextPanel(card: card,
+                                      agentControls: agentControls,
+                                      runState: agentRunner.state(for: card),
+                                      chatFilter: $chatFilter)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(.vertical, DesignTokens.Spacing.large)
+                }
+                .frame(width: sidebarWidth, height: columnHeight, alignment: .topLeading)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
@@ -617,6 +635,357 @@ private struct CardViewMode<AgentControls: View>: View {
         DesignTokens.Colors.preferredAccent(for: colorScheme)
     }
 
+    @ViewBuilder
+    private var contentColumn: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.large) {
+            BranchHelperPanel(formDraft: formDraft,
+                               branchPrefix: $branchPrefix,
+                               recommendedBranch: recommendedBranch,
+                               checkoutCommand: checkoutCommand,
+                               statusMessage: branchStatusMessage,
+                               isApplying: isApplyingBranch,
+                               onCopyBranch: onCopyBranch,
+                               onCopyCommand: onCopyCommand,
+                               onApplyBranch: onApplyBranch)
+            MetadataGrid(formDraft: formDraft, phase: phase)
+            SummaryBlock(summary: $formDraft.summary)
+            CriteriaList(criteria: $formDraft.criteria, accentColor: accentColor)
+            NotesBlock(notes: $formDraft.notes, accentColor: accentColor)
+            AttachmentsCommentsBlock()
+            HistoryTimeline(history: formDraft.history, accentColor: accentColor)
+        }
+        .padding(.horizontal, DesignTokens.Spacing.small)
+    }
+}
+
+private struct AgentContextPanel<AgentControls: View>: View {
+    let card: Card
+    let agentControls: AgentControls
+    let runState: AgentRunState?
+    @Binding var chatFilter: AgentChatMessage.Role?
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private let filterOptions: [AgentChatMessage.Role?] = [nil, .system, .user, .assistant, .status]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
+            HStack(spacing: DesignTokens.Spacing.small) {
+                Label("Agent Context", systemImage: "bubble.left.and.bubble.right.fill")
+                    .font(DesignTokens.Typography.headline)
+                Spacer()
+                statusBadge
+            }
+
+            agentControls
+
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    Picker("Filter transcript", selection: $chatFilter) {
+                        ForEach(filterOptions, id: \.self) { option in
+                            Text(filterLabel(for: option)).tag(option)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(minWidth: 320)
+                }
+
+                AgentChatTranscript(runState: runState,
+                                    filter: chatFilter)
+            }
+        }
+        .padding()
+        .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.large)
+            .fill(DesignTokens.Colors.surfaceRaised))
+        .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.large)
+            .stroke(DesignTokens.Colors.stroke, lineWidth: 1))
+        .tokenShadow(DesignTokens.Shadows.raised)
+    }
+
+    private var statusBadge: some View {
+        let statusText: String
+        let badgeColor: Color
+        if let runState {
+            statusText = runState.phase.rawValue.capitalized
+            badgeColor = DesignTokens.Colors.preferredAccent(for: colorScheme)
+        } else {
+            statusText = "Idle"
+            badgeColor = DesignTokens.Colors.textSecondary
+        }
+
+        return Text(statusText)
+            .font(DesignTokens.Typography.caption.weight(.semibold))
+            .padding(.horizontal, DesignTokens.Spacing.small)
+            .padding(.vertical, DesignTokens.Spacing.grid)
+            .background(Capsule().fill(badgeColor.opacity(0.15)))
+            .foregroundStyle(badgeColor)
+    }
+
+    private func filterLabel(for option: AgentChatMessage.Role?) -> String {
+        switch option {
+        case .none: return "All"
+        case .some(.system): return "System"
+        case .some(.user): return "User"
+        case .some(.assistant): return "Assistant"
+        case .some(.status): return "Status"
+        }
+    }
+}
+
+private struct AgentChatTranscript: View {
+    let runState: AgentRunState?
+    let filter: AgentChatMessage.Role?
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+            HStack {
+                Label("Transcript", systemImage: "message.fill")
+                    .font(DesignTokens.Typography.caption.weight(.semibold))
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                Spacer()
+                if let runState, let finished = runState.finishedAt {
+                    Text(finished, style: .time)
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Colors.textMuted)
+                }
+            }
+
+            transcriptBody
+        }
+        .padding()
+        .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium)
+            .fill(DesignTokens.Colors.surface))
+        .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium)
+            .stroke(DesignTokens.Colors.strokeMuted, lineWidth: 1))
+    }
+
+    @ViewBuilder
+    private var transcriptBody: some View {
+        if messages.isEmpty {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.grid) {
+                Text("No agent messages yet.")
+                    .font(DesignTokens.Typography.body)
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                Text("Run any flow to stream the agent’s conversation and execution log.")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textMuted)
+            }
+            .frame(maxWidth: .infinity, minHeight: 200, alignment: .topLeading)
+        } else {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+                        ForEach(messages) { message in
+                            AgentChatBubble(message: message,
+                                            accent: DesignTokens.Colors.preferredAccent(for: colorScheme))
+                                .id(message.id)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(minHeight: 260, maxHeight: 420)
+                .onAppear {
+                    if let last = messages.last {
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                    }
+                }
+                .onChange(of: messages.count) { _, _ in
+                    if let last = messages.last {
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                    }
+                }
+            }
+        }
+    }
+
+    private var messages: [AgentChatMessage] {
+        guard let runState else { return [] }
+        var rendered: [AgentChatMessage] = []
+        let recentLogs = Array(runState.logs.suffix(80))
+
+        for line in recentLogs {
+            for message in parseLogLine(line) {
+                rendered.append(message)
+            }
+        }
+
+        if rendered.isEmpty, let summary = runState.summary {
+            rendered.append(AgentChatMessage(role: .status, text: summary))
+        }
+
+        if let filter {
+            return rendered.filter { $0.role == filter }
+        }
+
+        return rendered
+    }
+
+    private func parseLogLine(_ line: String) -> [AgentChatMessage] {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        // JSON event payloads from worker logs.
+        if let data = trimmed.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            var messages: [AgentChatMessage] = []
+            let message = object["message"] as? String ?? object["summary"] as? String
+            let event = (object["event"] as? String ?? "").lowercased()
+            let statusString = (object["status"] as? String ?? "").lowercased()
+            let percent = double(from: object["percent"]) ?? double(from: object["progress"])
+
+            if event == "progress" || percent != nil {
+                let text: String
+                if let message {
+                    text = message
+                } else if let percent {
+                    text = "Progress \(Int(percent * 100))%"
+                } else {
+                    text = "Progress"
+                }
+                messages.append(AgentChatMessage(role: .status, text: text))
+            } else if !statusString.isEmpty {
+                messages.append(AgentChatMessage(role: .status,
+                                                 text: message ?? statusString.capitalized))
+            } else if let message {
+                messages.append(AgentChatMessage(role: .assistant, text: message))
+            }
+
+            if !messages.isEmpty { return messages }
+        }
+
+        // Timestamp + role prefix, e.g., "[02:00] system: ..."
+        if let bracketRange = trimmed.range(of: "] "),
+           trimmed.first == "[",
+           let _ = trimmed[trimmed.index(after: bracketRange.upperBound)...]
+            .split(separator: ":", maxSplits: 1, omittingEmptySubsequences: true).first {
+            let remaining = trimmed[bracketRange.upperBound...]
+            if let parsed = parsePrefixed(String(remaining)) {
+                return [parsed]
+            }
+        }
+
+        // Simple role prefixes.
+        if let parsed = parsePrefixed(trimmed) {
+            return [parsed]
+        }
+
+        // Errors / warnings bubble.
+        let lower = trimmed.lowercased()
+        if lower.contains("error") || lower.contains("failed") || lower.contains("cancel") {
+            return [AgentChatMessage(role: .status, text: trimmed)]
+        }
+
+        // Default: treat as assistant narration.
+        return [AgentChatMessage(role: .assistant, text: trimmed)]
+    }
+
+    private func parsePrefixed(_ text: String) -> AgentChatMessage? {
+        let lower = text.lowercased()
+        if lower.hasPrefix("system:") || lower.hasPrefix("[system]") {
+            return AgentChatMessage(role: .system, text: stripped(text, removingPrefixes: ["system:", "[system]"]))
+        }
+        if lower.hasPrefix("user:") || lower.hasPrefix("[user]") || lower.hasPrefix("user>") {
+            return AgentChatMessage(role: .user, text: stripped(text, removingPrefixes: ["user:", "[user]", "user>"]))
+        }
+        if lower.hasPrefix("assistant:") || lower.hasPrefix("[assistant]") || lower.hasPrefix("assistant>") {
+            return AgentChatMessage(role: .assistant, text: stripped(text, removingPrefixes: ["assistant:", "[assistant]", "assistant>"]))
+        }
+        return nil
+    }
+
+    private func stripped(_ text: String, removingPrefixes prefixes: [String]) -> String {
+        for prefix in prefixes {
+            if text.lowercased().hasPrefix(prefix) {
+                let index = text.index(text.startIndex, offsetBy: prefix.count)
+                return text[index...].trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func double(from value: Any?) -> Double? {
+        if let value = value as? Double { return value }
+        if let value = value as? Int { return Double(value) }
+        if let value = value as? String { return Double(value) }
+        return nil
+    }
+}
+
+private struct AgentChatBubble: View {
+    let message: AgentChatMessage
+    let accent: Color
+
+    private let systemColor = Color(red: 112/255, green: 86/255, blue: 218/255)
+    private let userColor = Color(red: 58/255, green: 96/255, blue: 180/255)
+    private let assistantColor = Color(red: 46/255, green: 146/255, blue: 121/255)
+    private let statusColor = Color(red: 209/255, green: 173/255, blue: 78/255)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.grid) {
+            Text(message.role.label)
+                .font(DesignTokens.Typography.caption.weight(.semibold))
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+            Text(message.text)
+                .font(DesignTokens.Typography.body)
+                .foregroundStyle(DesignTokens.Colors.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium)
+            .fill(background))
+        .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium)
+            .stroke(stroke, lineWidth: 1))
+    }
+
+    private var background: Color {
+        switch message.role {
+        case .system:
+            return systemColor.opacity(0.18)
+        case .user:
+            return userColor.opacity(0.18)
+        case .assistant:
+            return assistantColor.opacity(0.16)
+        case .status:
+            return statusColor.opacity(0.22)
+        }
+    }
+
+    private var stroke: Color {
+        switch message.role {
+        case .system:
+            return systemColor.opacity(0.45)
+        case .user:
+            return userColor.opacity(0.55)
+        case .assistant:
+            return assistantColor.opacity(0.45)
+        case .status:
+            return statusColor.opacity(0.65)
+        }
+    }
+}
+
+private struct AgentChatMessage: Identifiable {
+    enum Role {
+        case system
+        case user
+        case assistant
+        case status
+
+        var label: String {
+            switch self {
+            case .system: return "System"
+            case .user: return "User"
+            case .assistant: return "Assistant"
+            case .status: return "Status"
+            }
+        }
+    }
+
+    let id = UUID()
+    let role: Role
+    let text: String
 }
 
 private struct AgentControlPanel: View {
@@ -729,8 +1098,6 @@ private struct AgentControlPanel: View {
                             .font(DesignTokens.Typography.caption)
                             .foregroundStyle(DesignTokens.Colors.textSecondary)
                     }
-                    AgentLogView(logs: runState.logs)
-
                     if let failureSummary {
                         HStack(spacing: DesignTokens.Spacing.small) {
                             Label(failureSummary, systemImage: "exclamationmark.triangle")
