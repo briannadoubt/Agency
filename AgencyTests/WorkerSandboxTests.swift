@@ -83,4 +83,26 @@ struct WorkerSandboxTests {
 
         try? fm.removeItem(at: root)
     }
+
+    @Test func validatorRejectsWritesOutsideScopedRoots() throws {
+        let allowed = [URL(fileURLWithPath: "/tmp/allowed"), URL(fileURLWithPath: "/tmp/logs")]
+        let validator = FileAccessValidator(allowedRoots: allowed)
+
+        try validator.validateWrite(URL(fileURLWithPath: "/tmp/allowed/output.txt"))
+        try validator.validateWrite(URL(fileURLWithPath: "/tmp/logs/worker.log"))
+
+        do {
+            try validator.validateWrite(URL(fileURLWithPath: "/tmp/forbidden/file.txt"))
+            #expect(false)
+        } catch let error as WorkerSandboxError {
+            switch error {
+            case .writeOutsideScope:
+                #expect(true)
+            default:
+                #expect(false)
+            }
+        } catch {
+            #expect(false)
+        }
+    }
 }

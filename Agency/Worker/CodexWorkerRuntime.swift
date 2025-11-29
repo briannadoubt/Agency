@@ -9,8 +9,24 @@ struct CodexWorkerRuntime {
     let logDirectory: URL
     let outputDirectory: URL
     let allowNetwork: Bool
+    private let accessValidator: FileAccessValidator
 
     private let logger = Logger(subsystem: "dev.agency.worker", category: "runtime")
+
+    init(payload: CodexRunRequest,
+         endpointName: String,
+         logDirectory: URL,
+         outputDirectory: URL,
+         allowNetwork: Bool,
+         accessValidator: FileAccessValidator? = nil) {
+        self.payload = payload
+        self.endpointName = endpointName
+        self.logDirectory = logDirectory
+        self.outputDirectory = outputDirectory
+        self.allowNetwork = allowNetwork
+        let validator = accessValidator ?? FileAccessValidator(allowedRoots: [logDirectory, outputDirectory])
+        self.accessValidator = validator
+    }
 
     func run() async {
         let start = Date()
@@ -85,6 +101,7 @@ struct CodexWorkerRuntime {
                      "event": event]
             .merging(extra) { $1 }
         let line = (try? JSONSerialization.data(withJSONObject: entry)) ?? Data()
+        try accessValidator.validateWrite(logURL)
         try appendLine(line, to: logURL)
     }
 
@@ -185,6 +202,7 @@ enum WorkerSandboxError: LocalizedError {
     case missingBookmark
     case bookmarkResolutionFailed(String)
     case securityScopeUnavailable
+    case writeOutsideScope(String)
 
     var errorDescription: String? {
         switch self {
@@ -194,6 +212,8 @@ enum WorkerSandboxError: LocalizedError {
             return "Unable to resolve project bookmark: \(reason)"
         case .securityScopeUnavailable:
             return "Security scope could not be activated for the project bookmark."
+        case .writeOutsideScope(let path):
+            return "Attempted to write outside scoped directories: \(path)"
         }
     }
 }
@@ -245,5 +265,23 @@ struct WorkerSandbox {
         let url: URL
         let access: SecurityScopedAccess
         let bookmarkWasStale: Bool
+    }
+}
+
+/// Validates that workers only write inside the scoped log/output directories.
+struct FileAccessValidator {
+    let allowedRoots: [URL]
+
+    func validateWrite(_ url: URL) throws {
+        let normalized = url.standardizedFileURL
+        let allowed = allowedRoots.contains { root in
+            let rootComponents = root.standardizedFileURL.pathComponents
+            let pathComponents = normalized.pathComponents
+            return pathComponents.starts(with: rootComponents)
+        }
+
+        guard allowed else {
+            throw WorkerSandboxError.writeOutsideScope(normalized.path)
+        }
     }
 }
