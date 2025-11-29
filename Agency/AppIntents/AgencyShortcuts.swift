@@ -13,5 +13,16 @@ struct AgencyShortcuts: AppShortcutsProvider {
             shortTitle: "List Cards",
             systemImageName: "list.bullet.rectangle"
         )
+
+        AppShortcut(
+            intent: ProjectStatusIntent(),
+            phrases: [
+                "Project status in \(.applicationName)",
+                "How many cards in \(.applicationName)",
+                "What's my \(.applicationName) status"
+            ],
+            shortTitle: "Project Status",
+            systemImageName: "chart.bar"
+        )
     }
 }

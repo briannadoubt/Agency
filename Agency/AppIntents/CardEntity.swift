@@ -86,8 +86,8 @@ enum CardStatusAppEnum: String, AppEnum {
     }
 }
 
-/// Query for finding cards by ID or searching.
-struct CardEntityQuery: EntityQuery {
+/// Query for finding cards by ID or searching by string.
+struct CardEntityQuery: EntityStringQuery {
     @MainActor
     func entities(for identifiers: [String]) async throws -> [CardEntity] {
         guard let snapshot = AppIntentsProjectAccess.shared.snapshot else {
@@ -98,6 +98,30 @@ struct CardEntityQuery: EntityQuery {
         for phaseSnapshot in snapshot.phases {
             for card in phaseSnapshot.cards {
                 if identifiers.contains(card.filePath.path) {
+                    results.append(CardEntity(card: card, phase: phaseSnapshot.phase))
+                }
+            }
+        }
+        return results
+    }
+
+    /// Search cards by string matching against code, title, or summary.
+    @MainActor
+    func entities(matching string: String) async throws -> [CardEntity] {
+        guard let snapshot = AppIntentsProjectAccess.shared.snapshot else {
+            return []
+        }
+
+        let searchTerm = string.lowercased()
+        var results: [CardEntity] = []
+
+        for phaseSnapshot in snapshot.phases {
+            for card in phaseSnapshot.cards {
+                let matchesCode = card.code.lowercased().contains(searchTerm)
+                let matchesTitle = (card.title ?? card.slug).lowercased().contains(searchTerm)
+                let matchesSummary = card.summary?.lowercased().contains(searchTerm) ?? false
+
+                if matchesCode || matchesTitle || matchesSummary {
                     results.append(CardEntity(card: card, phase: phaseSnapshot.phase))
                 }
             }
