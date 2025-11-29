@@ -175,7 +175,58 @@ final class AgentRunnerTests: XCTestCase {
     }
 
     @MainActor
-    private func makeCard() throws -> (Card, URL) {
+    func testManualOverrideOnDiskAllowsRerunWithStaleCard() async throws {
+        let (card, tempRoot) = try makeCard(agentStatus: "failed")
+        let runner = AgentRunner()
+
+        let locked = await runner.startRun(card: card, flow: .implement)
+        guard case .failure(let error) = locked else {
+            XCTFail("Expected run to be blocked when agent_status is non-idle")
+            try FileManager.default.removeItem(at: tempRoot)
+            return
+        }
+        XCTAssertEqual(error, .cardLocked("failed"))
+
+        // Manual override on disk resets the status to idle, but the in-memory Card remains stale.
+        let idleContents = try String(contentsOf: card.filePath, encoding: .utf8)
+            .replacingOccurrences(of: "agent_status: failed", with: "agent_status: idle")
+        try idleContents.write(to: card.filePath, atomically: true, encoding: .utf8)
+
+        let rerun = await runner.startRun(card: card, flow: .implement)
+        guard case .success = rerun else {
+            XCTFail("Run should start after manual override to idle")
+            try FileManager.default.removeItem(at: tempRoot)
+            return
+        }
+
+        let finished = await waitFor(runner.state(for: card)?.phase == .succeeded)
+        XCTAssertTrue(finished, "Manual override should allow rerun to complete")
+
+        try FileManager.default.removeItem(at: tempRoot)
+    }
+
+    @MainActor
+    func testResetAgentStateClearsFlowAndSetsIdle() async throws {
+        let (card, tempRoot) = try makeCard(agentStatus: "failed", agentFlow: "implement")
+        let runner = AgentRunner()
+
+        let result = await runner.resetAgentState(for: card)
+        guard case .success = result else {
+            XCTFail("Reset failed: \(String(describing: result))")
+            try FileManager.default.removeItem(at: tempRoot)
+            return
+        }
+
+        let contents = try String(contentsOf: card.filePath, encoding: .utf8)
+        XCTAssertFalse(contents.contains("agent_flow:"), "Reset should clear agent_flow")
+        XCTAssertTrue(contents.contains("agent_status: idle"), "Reset should set agent_status to idle")
+        XCTAssertTrue(contents.contains("Agent state reset to idle"), "History should log the manual reset")
+
+        try FileManager.default.removeItem(at: tempRoot)
+    }
+
+    @MainActor
+    private func makeCard(agentStatus: String = "idle", agentFlow: String = "null") throws -> (Card, URL) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let phase = root.appendingPathComponent("project/phase-0-test")
         let backlog = phase.appendingPathComponent(CardStatus.backlog.folderName)
@@ -185,8 +236,8 @@ final class AgentRunnerTests: XCTestCase {
         let contents = """
         ---
         owner: tester
-        agent_flow: null
-        agent_status: idle
+        agent_flow: \(agentFlow)
+        agent_status: \(agentStatus)
         branch: null
         risk: normal
         review: not-requested

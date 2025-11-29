@@ -58,6 +58,7 @@ struct CardDetailModal: View {
     @State private var skipRawRefreshOnce = false
     @State private var selectedFlow: AgentFlow = .implement
     @State private var agentError: String?
+    @State private var externalChangePending = false
 
     private let pipeline = CardEditingPipeline.shared
     private let branchHelper = BranchHelper()
@@ -116,6 +117,14 @@ struct CardDetailModal: View {
                             }
                         }
 
+                        if externalChangePending {
+                            ExternalChangeBanner(onReload: {
+                                Task { await reloadFromDisk() }
+                            }, onDismiss: {
+                                externalChangePending = false
+                            })
+                        }
+
                         content
                     }
                 }
@@ -131,6 +140,9 @@ struct CardDetailModal: View {
         .frame(minWidth: 860, minHeight: 640)
         .task {
             await loadSnapshot()
+        }
+        .onChange(of: card) { _, _ in
+            Task { await handleExternalCardUpdate() }
         }
         .alert("Agent error", isPresented: Binding(get: { agentError != nil }, set: { newValue in
             if !newValue { agentError = nil }
@@ -271,6 +283,13 @@ struct CardDetailModal: View {
                 }
 
                 Button {
+                    Task { await reloadFromDisk() }
+                } label: {
+                    Label("Reload", systemImage: "arrow.clockwise")
+                }
+                .disabled(isSaving)
+
+                Button {
                     Task { await save() }
                 } label: {
                     if isSaving {
@@ -298,6 +317,9 @@ struct CardDetailModal: View {
     }
 
     private func loadSnapshot() async {
+        await MainActor.run {
+            isLoading = true
+        }
         do {
             let loaded = try pipeline.loadSnapshot(for: card)
             await MainActor.run {
@@ -311,6 +333,7 @@ struct CardDetailModal: View {
                 rawDraft = loaded.contents
                 selectedFlow = AgentFlow(rawValue: formDraft.agentFlow.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) ?? .implement
                 isLoading = false
+                externalChangePending = false
             }
         } catch {
             await MainActor.run {
@@ -318,6 +341,21 @@ struct CardDetailModal: View {
                 isLoading = false
             }
         }
+    }
+
+    private func handleExternalCardUpdate() async {
+        if hasUnsavedChanges {
+            await MainActor.run {
+                externalChangePending = true
+            }
+            return
+        }
+
+        await loadSnapshot()
+    }
+
+    private func reloadFromDisk() async {
+        await loadSnapshot()
     }
 
     private func syncDraftsForModeChange(from old: CardDetailMode, to new: CardDetailMode) {
@@ -1150,6 +1188,41 @@ private struct InlineErrorBanner: View {
                 .font(DesignTokens.Typography.body)
                 .foregroundStyle(DesignTokens.Colors.textPrimary)
             Spacer()
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.borderless)
+            .help("Dismiss")
+        }
+        .padding()
+        .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium)
+            .fill(DesignTokens.Colors.surfaceRaised))
+        .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium)
+            .stroke(DesignTokens.Colors.stroke, lineWidth: 1))
+    }
+}
+
+private struct ExternalChangeBanner: View {
+    let onReload: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.small) {
+            Image(systemName: "info.circle.fill")
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+            Text("Card changed on disk. Reload to pick up manual edits and overrides.")
+                .font(DesignTokens.Typography.body)
+                .foregroundStyle(DesignTokens.Colors.textPrimary)
+            Spacer()
+            Button {
+                onReload()
+            } label: {
+                Label("Reload", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.borderedProminent)
+
             Button {
                 onDismiss()
             } label: {
