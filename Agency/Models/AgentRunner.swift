@@ -272,10 +272,12 @@ final class AgentRunner {
         case .finished(let result):
             state.result = result
             let phase: AgentRunPhase
-            switch result.status {
-            case .succeeded: phase = .succeeded
-            case .failed: phase = .failed
-            case .canceled: phase = .canceled
+            if result.status == .canceled {
+                phase = .canceled
+            } else if result.status == .failed || result.exitCode != 0 {
+                phase = .failed
+            } else {
+                phase = .succeeded
             }
             finish(runID: runID,
                    phase: phase,
@@ -338,12 +340,14 @@ final class AgentRunner {
         case .queued, .running: statusValue = "running"
         }
 
+        let history = historyEntry(for: state, phase: phase)
+
         try? updateFrontmatter(at: URL(fileURLWithPath: state.cardPath),
                                mutate: { draft in
                                    draft.agentStatus = statusValue
                                    draft.agentFlow = state.flow.rawValue
                                },
-                               history: historyEntry("Run \(runID) finished (\(statusValue))"))
+                               history: history)
 
         if phase == .succeeded {
             Task { [projectLoader] in
@@ -428,6 +432,31 @@ final class AgentRunner {
 
     private func historyEntry(_ message: String, date: Date = .now) -> String {
         CardDetailFormDraft.defaultHistoryPrefix(on: date) + message
+    }
+
+    private func historyEntry(for state: AgentRunState, phase: AgentRunPhase) -> String {
+        let runID = state.id
+        let flow = state.flow.rawValue
+
+        switch phase {
+        case .failed:
+            let exitCode = state.result?.exitCode ?? 1
+            let reason = (state.result?.summary ?? "failed").trimmingCharacters(in: .whitespacesAndNewlines)
+            let logPath = state.logDirectory?.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+            if let logPath, !logPath.isEmpty {
+                return historyEntry("Run \(runID) failed (\(flow)); exit \(exitCode); reason=\(reason); see logs at \(logPath)")
+            }
+            return historyEntry("Run \(runID) failed (\(flow)); exit \(exitCode); reason=\(reason)")
+
+        case .succeeded:
+            return historyEntry("Run \(runID) succeeded (\(flow))")
+
+        case .canceled:
+            return historyEntry("Run \(runID) canceled (\(flow))")
+
+        case .queued, .running:
+            return historyEntry("Run \(runID) finished (\(phase.rawValue))")
+        }
     }
 
     private func cleanupOutputs(at url: URL) {

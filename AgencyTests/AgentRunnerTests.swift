@@ -86,6 +86,31 @@ final class AgentRunnerTests: XCTestCase {
     }
 
     @MainActor
+    func testNonZeroExitMarksFailureAndRetainsCard() async throws {
+        let (card, tempRoot) = try makeCard()
+        let runner = AgentRunner(executors: [.simulated: FailingExecutor(exitCode: 2,
+                                                                          summary: "non-zero exit")])
+
+        let start = await runner.startRun(card: card, flow: .implement)
+        guard case .success(let state) = start else {
+            XCTFail("Run failed to start")
+            try FileManager.default.removeItem(at: tempRoot)
+            return
+        }
+
+        let finished = await waitFor(runner.state(for: card)?.phase == .failed)
+        XCTAssertTrue(finished, "Run did not surface failure")
+
+        let contents = try String(contentsOf: card.filePath, encoding: .utf8)
+        XCTAssertTrue(contents.contains("agent_status: failed"))
+        XCTAssertTrue(contents.contains(state.id.uuidString))
+        XCTAssertTrue(contents.contains("exit 2"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: card.filePath.path))
+
+        try FileManager.default.removeItem(at: tempRoot)
+    }
+
+    @MainActor
     func testPlanFlowCreatesPhaseAndRefreshesLoader() async throws {
         let (card, tempRoot) = try makeCard()
         let runner = AgentRunner(executors: [.cli: CLIPhaseExecutor()])
@@ -211,5 +236,23 @@ private final class StubPlanExecutor: AgentExecutor {
         for event in events {
             await emit(event)
         }
+    }
+}
+
+private struct FailingExecutor: AgentExecutor {
+    let exitCode: Int32
+    let summary: String
+
+    func run(request: CodexRunRequest,
+             logURL: URL,
+             outputDirectory: URL,
+             emit: @escaping @Sendable (WorkerLogEvent) async -> Void) async {
+        let result = WorkerRunResult(status: .failed,
+                                     exitCode: exitCode,
+                                     duration: 0.1,
+                                     bytesRead: 0,
+                                     bytesWritten: 0,
+                                     summary: summary)
+        await emit(.finished(result))
     }
 }
