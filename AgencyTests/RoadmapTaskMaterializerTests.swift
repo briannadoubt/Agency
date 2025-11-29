@@ -12,6 +12,7 @@ final class RoadmapTaskMaterializerTests: XCTestCase {
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
 
         try roadmap(singlePhaseWithTwoTasks()).write(to: root.appendingPathComponent("ROADMAP.md"), atomically: true, encoding: .utf8)
+        try seedArchitecture(from: singlePhaseWithTwoTasks(), at: root)
 
         let materializer = RoadmapTaskMaterializer(fileManager: fm,
                                                    parser: RoadmapParser(),
@@ -64,6 +65,7 @@ final class RoadmapTaskMaterializerTests: XCTestCase {
         try cardContents.write(to: cardURL, atomically: true, encoding: .utf8)
 
         try roadmap(deliveryRoadmap()).write(to: root.appendingPathComponent("ROADMAP.md"), atomically: true, encoding: .utf8)
+        try seedArchitecture(from: deliveryRoadmap(), at: root)
 
         let materializer = RoadmapTaskMaterializer(fileManager: fm,
                                                    parser: RoadmapParser(),
@@ -88,6 +90,7 @@ final class RoadmapTaskMaterializerTests: XCTestCase {
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
 
         try roadmap(multiPhaseRoadmap()).write(to: root.appendingPathComponent("ROADMAP.md"), atomically: true, encoding: .utf8)
+        try seedArchitecture(from: multiPhaseRoadmap(), at: root)
 
         let materializer = RoadmapTaskMaterializer(fileManager: fm,
                                                    parser: RoadmapParser(),
@@ -273,4 +276,39 @@ private func multiPhaseRoadmap() -> String {
     History:
     - 2025-11-29: seeded
     """
+}
+
+@MainActor
+private func seedArchitecture(from roadmapMarkdown: String, at root: URL) throws {
+    let parser = RoadmapParser()
+    guard let document = parser.parse(contents: roadmapMarkdown).document else {
+        throw XCTSkip("Unable to parse roadmap for architecture seed")
+    }
+
+    let fingerprint = ArchitectureGenerator.fingerprint(for: document)
+    let phases = document.phases.map { phase in
+        ArchitecturePhaseSummary(number: phase.number,
+                                 label: phase.label,
+                                 status: phase.status.rawValue,
+                                 tasks: phase.tasks.map { task in
+                                     ArchitectureTaskSummary(code: task.code,
+                                                             title: task.title,
+                                                             summary: task.summary,
+                                                             status: task.status)
+                                 })
+    }
+    let architecture = ArchitectureDocument(version: 1,
+                                            generatedAt: document.generatedAt,
+                                            projectGoal: document.projectGoal,
+                                            targetPlatforms: [],
+                                            languages: [],
+                                            techStack: [],
+                                            roadmapFingerprint: fingerprint,
+                                            phases: phases,
+                                            manualNotes: document.manualNotes)
+    let markdown = ArchitectureRenderer().render(document: architecture,
+                                                history: ["- \(document.generatedAt): seeded architecture."],
+                                                manualNotes: architecture.manualNotes)
+
+    try markdown.write(to: root.appendingPathComponent("ARCHITECTURE.md"), atomically: true, encoding: .utf8)
 }
