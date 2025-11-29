@@ -95,6 +95,58 @@ final class CodexAgentExecutorTests: XCTestCase {
         XCTAssertFalse(recordedEvents.isEmpty, "Recorded events: \(recordedEvents)")
     }
 
+    func testCrashWithoutFinishedEventEmitsFailure() async throws {
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let logURL = temp.appendingPathComponent("worker.log")
+        let request = makeRequest(logDirectory: temp)
+
+        let streamer = StubStreamer(events: [.log("partial")])
+        let client = StubSupervisorClient { _ in
+            .success(WorkerEndpoint(runID: request.runID, bootstrapName: "test"))
+        }
+
+        let executor = CodexAgentExecutor(client: client, streamer: streamer)
+        recordedEvents = []
+
+        await executor.run(request: request, logURL: logURL, outputDirectory: temp) { event in
+            await MainActor.run { self.recordedEvents.append(event) }
+        }
+
+        guard case .finished(let result)? = recordedEvents.last else {
+            XCTFail("Expected finished event after crash fallback")
+            return
+        }
+
+        XCTAssertEqual(result.status, .failed)
+        XCTAssertEqual(client.canceledRunIDs, [request.runID])
+    }
+
+    func testMissingLogEmitsFailureInsteadOfCrashing() async throws {
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let logURL = temp.appendingPathComponent("worker.log")
+        let request = makeRequest(logDirectory: temp)
+
+        let streamer = StubStreamer(events: [], streamError: WorkerLogStreamError.fileMissing)
+        let client = StubSupervisorClient { _ in
+            .success(WorkerEndpoint(runID: request.runID, bootstrapName: "test"))
+        }
+
+        let executor = CodexAgentExecutor(client: client, streamer: streamer)
+        recordedEvents = []
+
+        await executor.run(request: request, logURL: logURL, outputDirectory: temp) { event in
+            await MainActor.run { self.recordedEvents.append(event) }
+        }
+
+        guard case .finished(let result)? = recordedEvents.last else {
+            XCTFail("Expected failure result when logs are missing")
+            return
+        }
+
+        XCTAssertEqual(result.status, .failed)
+        XCTAssertFalse(result.summary.isEmpty)
+    }
+
     // MARK: - Helpers
 
     private func makeRequest(logDirectory: URL) -> CodexRunRequest {
@@ -131,6 +183,29 @@ final class StubSupervisorClient: SupervisorClienting {
     func reconnect(runID: UUID) async -> WorkerEndpoint? { nil }
 
     func backoffDelay(after failures: Int) async -> Duration { .zero }
+}
+
+struct StubStreamer: WorkerLogStreaming {
+    let events: [WorkerLogEvent]
+    var streamError: Error?
+
+    func stream(logURL: URL) -> AsyncThrowingStream<WorkerLogEvent, Error> {
+        AsyncThrowingStream { continuation in
+            if let streamError {
+                continuation.finish(throwing: streamError)
+                return
+            }
+
+            for event in events {
+                continuation.yield(event)
+            }
+            continuation.finish()
+        }
+    }
+
+    func readAllEvents(logURL: URL) throws -> [WorkerLogEvent] {
+        events
+    }
 }
 
 // MARK: - Helpers

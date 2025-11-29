@@ -6,6 +6,12 @@ enum WorkerLogEvent: Equatable {
     case finished(WorkerRunResult)
 }
 
+/// Abstraction for streaming worker logs; allows testing failure paths without touching the real file watcher.
+protocol WorkerLogStreaming {
+    func stream(logURL: URL) -> AsyncThrowingStream<WorkerLogEvent, Error>
+    func readAllEvents(logURL: URL) throws -> [WorkerLogEvent]
+}
+
 enum WorkerLogStreamError: LocalizedError {
     case fileMissing
 
@@ -140,3 +146,5 @@ struct WorkerLogStreamer {
         return nil
     }
 }
+
+extension WorkerLogStreamer: WorkerLogStreaming { }

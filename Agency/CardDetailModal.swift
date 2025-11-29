@@ -595,6 +595,19 @@ private struct AgentControlPanel: View {
         agentRunner.state(for: card)
     }
 
+    private var logDirectory: URL? { runState?.logDirectory }
+
+    private var failureSummary: String? {
+        guard let runState, runState.phase == .failed else { return nil }
+        if let summary = runState.summary, !summary.isEmpty {
+            return summary
+        }
+        if let exit = runState.result?.exitCode {
+            return "Run failed with exit \(exit)"
+        }
+        return "Run failed"
+    }
+
     private var statusLabel: String {
         if let runState {
             return runState.phase.rawValue.capitalized
@@ -678,6 +691,23 @@ private struct AgentControlPanel: View {
                             .foregroundStyle(DesignTokens.Colors.textSecondary)
                     }
                     AgentLogView(logs: runState.logs)
+
+                    if let failureSummary {
+                        HStack(spacing: DesignTokens.Spacing.small) {
+                            Label(failureSummary, systemImage: "exclamationmark.triangle")
+                                .font(DesignTokens.Typography.caption)
+                                .foregroundStyle(.red)
+
+                            if let logDirectory {
+                                Button {
+                                    openLogs(logDirectory)
+                                } label: {
+                                    Label("View Logs", systemImage: "doc.text.magnifyingglass")
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                    }
                 }
             } else {
                 Text("Runs will stream here once started.")
@@ -709,6 +739,10 @@ private struct AgentControlPanel: View {
         let written = formatter.string(fromByteCount: result.bytesWritten)
 
         return "Exit \(result.exitCode) • \(formattedDuration) • read \(read) / wrote \(written)"
+    }
+
+    private func openLogs(_ url: URL) {
+        NSWorkspace.shared.open(url)
     }
 }
 

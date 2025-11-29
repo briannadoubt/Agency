@@ -3,11 +3,11 @@ import Foundation
 /// Executor that drives real Codex workers through the supervisor, streaming their log file into UI events.
 struct CodexAgentExecutor: AgentExecutor {
     private let client: any SupervisorClienting
-    private let streamer: WorkerLogStreamer
+    private let streamer: any WorkerLogStreaming
     private let fileManager: FileManager
 
     init(client: any SupervisorClienting = SupervisorClient(),
-         streamer: WorkerLogStreamer = WorkerLogStreamer(),
+         streamer: any WorkerLogStreaming = WorkerLogStreamer(),
          fileManager: FileManager = .default) {
         self.client = client
         self.streamer = streamer
@@ -31,6 +31,10 @@ struct CodexAgentExecutor: AgentExecutor {
         } catch {
             await emitFailure(error, tracker: tracker, emit: emit)
         }
+
+        await emitFallbackFailureIfNeeded(tracker: tracker,
+                                          emit: emit,
+                                          summary: "Worker exited without reporting a result")
 
         await cleanup(runID: request.runID, outputDirectory: outputDirectory)
     }
@@ -103,11 +107,25 @@ struct CodexAgentExecutor: AgentExecutor {
         guard await tracker.needsFinishEmission() else { return }
         await tracker.markEmitted()
         let failed = WorkerRunResult(status: .failed,
-                                      exitCode: 1,
-                                      duration: 0,
-                                      bytesRead: 0,
-                                      bytesWritten: 0,
-                                      summary: error.localizedDescription)
+                                     exitCode: 1,
+                                     duration: 0,
+                                     bytesRead: 0,
+                                     bytesWritten: 0,
+                                     summary: error.localizedDescription)
+        await emit(.finished(failed))
+    }
+
+    private func emitFallbackFailureIfNeeded(tracker: FinishTracker,
+                                             emit: @escaping @Sendable (WorkerLogEvent) async -> Void,
+                                             summary: String) async {
+        guard await tracker.needsFinishEmission() else { return }
+        await tracker.markEmitted()
+        let failed = WorkerRunResult(status: .failed,
+                                     exitCode: 1,
+                                     duration: 0,
+                                     bytesRead: 0,
+                                     bytesWritten: 0,
+                                     summary: summary)
         await emit(.finished(failed))
     }
 
