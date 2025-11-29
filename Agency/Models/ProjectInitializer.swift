@@ -7,17 +7,25 @@ struct ProjectInitializationOptions: Equatable {
     let goal: String?
     let dryRun: Bool
     let applyChanges: Bool
+    let generateArchitecture: Bool
+    let architectureInputs: ArchitectureInput
 
     init(projectRoot: URL,
          roadmapPath: URL? = nil,
          goal: String? = nil,
          dryRun: Bool = true,
-         applyChanges: Bool = false) {
+         applyChanges: Bool = false,
+         generateArchitecture: Bool = true,
+         architectureInputs: ArchitectureInput = ArchitectureInput(targetPlatforms: [],
+                                                                   languages: [],
+                                                                   techStack: [])) {
         self.projectRoot = projectRoot
         self.roadmapPath = roadmapPath
         self.goal = goal
         self.dryRun = dryRun
         self.applyChanges = applyChanges && !dryRun
+        self.generateArchitecture = generateArchitecture
+        self.architectureInputs = architectureInputs
     }
 
     var shouldWrite: Bool { applyChanges && !dryRun }
@@ -65,13 +73,16 @@ struct ProjectInitializer {
     private let fileManager: FileManager
     private let parser: RoadmapParser
     private let generator: RoadmapGenerator
+    private let architectureGenerator: ArchitectureGenerator
 
     init(fileManager: FileManager = .default,
          parser: RoadmapParser = RoadmapParser(),
-         generator: RoadmapGenerator = RoadmapGenerator()) {
+         generator: RoadmapGenerator = RoadmapGenerator(),
+         architectureGenerator: ArchitectureGenerator = ArchitectureGenerator()) {
         self.fileManager = fileManager
         self.parser = parser
         self.generator = generator
+        self.architectureGenerator = architectureGenerator
     }
 
     func initialize(options: ProjectInitializationOptions) throws -> ProjectInitializationResult {
@@ -138,6 +149,13 @@ struct ProjectInitializer {
             createdFiles.append(relativePath(of: roadmapDestination, from: options.projectRoot))
         }
 
+        if options.generateArchitecture {
+            let architectureResult = try generateArchitecture(options: options,
+                                                              roadmapURL: roadmapDestination,
+                                                              projectRoot: options.projectRoot)
+            createdFiles.append(relativePath(of: architectureResult, from: options.projectRoot))
+        }
+
         return ProjectInitializationResult(dryRun: options.dryRun,
                                            roadmapPath: relativePath(of: roadmapDestination, from: options.projectRoot),
                                            createdDirectories: createdDirectories.uniquePreservingOrder(),
@@ -174,6 +192,18 @@ struct ProjectInitializer {
         } catch {
             throw ProjectInitializationError.generationFailed(error.localizedDescription)
         }
+    }
+
+    private func generateArchitecture(options: ProjectInitializationOptions,
+                                      roadmapURL: URL,
+                                      projectRoot: URL) throws -> URL {
+        let architectureURL = projectRoot.appendingPathComponent("ARCHITECTURE.md")
+        let architectureOptions = ArchitectureGenerationOptions(projectRoot: projectRoot,
+                                                                roadmapPath: roadmapURL,
+                                                                inputs: options.architectureInputs,
+                                                                dryRun: options.dryRun)
+        _ = try architectureGenerator.generate(options: architectureOptions)
+        return architectureURL
     }
 
     private func prepareRootDirectory(options: ProjectInitializationOptions,
@@ -275,6 +305,7 @@ struct ProjectInitializationCommand {
             write("Mode: \(options.dryRun ? "dry-run (no writes)" : "apply")")
             write("Project root: \(options.projectRoot.path)")
             write("Roadmap: \(options.resolvedRoadmapPath.path)")
+            write("Architecture: \(options.generateArchitecture ? "enabled" : "disabled")")
 
             let initializer = ProjectInitializer(fileManager: fileManager,
                                                  parser: RoadmapParser(),
@@ -282,7 +313,11 @@ struct ProjectInitializationCommand {
                                                                              scanner: ProjectScanner(fileManager: fileManager,
                                                                                                      parser: CardFileParser()),
                                                                              parser: RoadmapParser(),
-                                                                             renderer: RoadmapRenderer()))
+                                                                             renderer: RoadmapRenderer()),
+                                                 architectureGenerator: ArchitectureGenerator(fileManager: fileManager,
+                                                                                               roadmapParser: RoadmapParser(),
+                                                                                               parser: ArchitectureParser(),
+                                                                                               renderer: ArchitectureRenderer()))
             let result = try initializer.initialize(options: options)
 
             for dir in result.createdDirectories {
@@ -340,6 +375,10 @@ struct ProjectInitializationCommand {
         var goal: String?
         var dryRun = true
         var applyChanges = false
+        var generateArchitecture = true
+        var targetPlatforms: [String] = []
+        var languages: [String] = []
+        var techStack: [String] = []
 
         var index = 0
         while index < arguments.count {
@@ -363,6 +402,20 @@ struct ProjectInitializationCommand {
             case "--dry-run":
                 dryRun = true
                 applyChanges = false
+            case "--no-architecture":
+                generateArchitecture = false
+            case "--target-platforms":
+                index += 1
+                guard index < arguments.count else { break }
+                targetPlatforms = arguments[index].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            case "--languages":
+                index += 1
+                guard index < arguments.count else { break }
+                languages = arguments[index].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            case "--tech-stack":
+                index += 1
+                guard index < arguments.count else { break }
+                techStack = arguments[index].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
             default:
                 break
             }
@@ -371,10 +424,15 @@ struct ProjectInitializationCommand {
 
         guard let projectRoot else { throw ProjectInitializationParseError.missingProjectRoot }
 
+        let architectureInputs = ArchitectureInput(targetPlatforms: targetPlatforms,
+                                                   languages: languages,
+                                                   techStack: techStack)
         return ProjectInitializationOptions(projectRoot: projectRoot,
                                              roadmapPath: roadmapPath,
                                              goal: goal,
                                              dryRun: dryRun,
-                                             applyChanges: applyChanges)
+                                             applyChanges: applyChanges,
+                                             generateArchitecture: generateArchitecture,
+                                             architectureInputs: architectureInputs)
     }
 }
