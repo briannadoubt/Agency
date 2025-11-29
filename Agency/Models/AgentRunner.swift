@@ -121,9 +121,18 @@ final class AgentRunner {
                  flow: AgentFlow = .implement,
                  backend: AgentBackendKind = .simulated) async -> Result<AgentRunState, AgentRunError> {
         let selectedBackend: AgentBackendKind = (backend == .simulated && flow == .plan) ? .cli : backend
-        let path = card.filePath.standardizedFileURL.path
 
-        if let status = card.frontmatter.agentStatus?.trimmingCharacters(in: .whitespacesAndNewlines),
+        let snapshot: CardDocumentSnapshot
+        do {
+            snapshot = try pipeline.loadSnapshot(for: card)
+        } catch {
+            return .failure(.snapshotUnavailable)
+        }
+
+        let latestCard = snapshot.card
+        let path = latestCard.filePath.standardizedFileURL.path
+
+        if let status = latestCard.frontmatter.agentStatus?.trimmingCharacters(in: .whitespacesAndNewlines),
            !status.isEmpty, status.lowercased() != "idle" {
             return .failure(.cardLocked(status))
         }
@@ -142,14 +151,14 @@ final class AgentRunner {
 
         let preparation: RunPreparation
         do {
-            preparation = try prepareRequest(for: card, runID: runID, flow: flow, backend: selectedBackend)
+            preparation = try prepareRequest(for: latestCard, runID: runID, flow: flow, backend: selectedBackend)
         } catch {
             locks.remove(path)
             return .failure(.preparationFailed(error.localizedDescription))
         }
 
         do {
-            try updateFrontmatter(at: card.filePath,
+            try updateFrontmatter(at: latestCard.filePath,
                                   mutate: { draft in
                                       draft.agentFlow = flow.rawValue
                                       draft.agentStatus = "queued"
@@ -166,7 +175,7 @@ final class AgentRunner {
                                   backend: selectedBackend,
                                   phase: .queued,
                                   progress: 0.0,
-                                  logs: ["Queued run for \(card.slug)"],
+                                  logs: ["Queued run for \(latestCard.slug)"],
                                   summary: nil,
                                   startedAt: .now,
                                   finishedAt: nil,
