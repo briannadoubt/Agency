@@ -53,11 +53,19 @@ final class ProjectInitializerTests: XCTestCase {
                                                                          scanner: ProjectScanner(fileManager: fm,
                                                                                                  parser: CardFileParser()),
                                                                          parser: RoadmapParser(),
-                                                                         renderer: RoadmapRenderer()))
+                                                                         renderer: RoadmapRenderer()),
+                                             architectureGenerator: ArchitectureGenerator(fileManager: fm,
+                                                                                           roadmapParser: RoadmapParser(),
+                                                                                           parser: ArchitectureParser(),
+                                                                                           renderer: ArchitectureRenderer(),
+                                                                                           dateProvider: { self.fixedDate() }))
         let options = ProjectInitializationOptions(projectRoot: root,
                                                    roadmapPath: roadmapTemplate,
                                                    dryRun: false,
-                                                   applyChanges: true)
+                                                   applyChanges: true,
+                                                   architectureInputs: ArchitectureInput(targetPlatforms: ["macOS"],
+                                                                                         languages: ["Swift"],
+                                                                                         techStack: ["SwiftUI"]))
         let result = try initializer.initialize(options: options)
 
         XCTAssertFalse(result.dryRun)
@@ -67,6 +75,7 @@ final class ProjectInitializerTests: XCTestCase {
         XCTAssertTrue(fm.fileExists(atPath: root.appendingPathComponent("ROADMAP.md").path))
         let copied = try String(contentsOf: root.appendingPathComponent("ROADMAP.md"), encoding: .utf8)
         XCTAssertEqual(copied, sampleRoadmap())
+        XCTAssertTrue(fm.fileExists(atPath: root.appendingPathComponent("ARCHITECTURE.md").path))
     }
 
     func testCommandDefaultsToDryRun() async throws {
@@ -83,6 +92,35 @@ final class ProjectInitializerTests: XCTestCase {
         XCTAssertTrue(output.stdout.contains("dry-run"))
         XCTAssertTrue(output.result?.dryRun ?? false)
         XCTAssertFalse(fm.fileExists(atPath: root.appendingPathComponent("project").path))
+    }
+
+    func testArchitectureGenerationCanBeDisabled() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        try sampleRoadmap().write(to: root.appendingPathComponent("ROADMAP.md"), atomically: true, encoding: .utf8)
+
+        let initializer = ProjectInitializer(fileManager: fm,
+                                             parser: RoadmapParser(),
+                                             generator: RoadmapGenerator(fileManager: fm,
+                                                                         scanner: ProjectScanner(fileManager: fm,
+                                                                                                 parser: CardFileParser()),
+                                                                         parser: RoadmapParser(),
+                                                                         renderer: RoadmapRenderer()),
+                                             architectureGenerator: ArchitectureGenerator(fileManager: fm,
+                                                                                           roadmapParser: RoadmapParser(),
+                                                                                           parser: ArchitectureParser(),
+                                                                                           renderer: ArchitectureRenderer(),
+                                                                                           dateProvider: { self.fixedDate() }))
+
+        let options = ProjectInitializationOptions(projectRoot: root,
+                                                   dryRun: false,
+                                                   applyChanges: true,
+                                                   generateArchitecture: false)
+        _ = try initializer.initialize(options: options)
+
+        XCTAssertFalse(fm.fileExists(atPath: root.appendingPathComponent("ARCHITECTURE.md").path))
     }
 }
 
@@ -140,4 +178,10 @@ private func sampleRoadmap() -> String {
     History:
     - 2025-11-29: seeded
     """
+}
+
+private extension ProjectInitializerTests {
+    func fixedDate() -> Date {
+        ISO8601DateFormatter().date(from: "2025-11-29T12:00:00Z")!
+    }
 }
