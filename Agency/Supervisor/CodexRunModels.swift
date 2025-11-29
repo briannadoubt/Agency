@@ -113,6 +113,7 @@ public enum CodexSupervisorError: Error, Equatable, LocalizedError {
     case workerBinaryMissing
     case workerLaunchFailed(String)
     case payloadEncodingFailed
+    case capabilitiesMissing([String])
 
     public var errorDescription: String? {
         switch self {
@@ -124,6 +125,8 @@ public enum CodexSupervisorError: Error, Equatable, LocalizedError {
             return "Failed to launch worker: \(reason)."
         case .payloadEncodingFailed:
             return "Unable to encode worker payload."
+        case .capabilitiesMissing(let missing):
+            return "Required entitlements are missing: \(missing.joined(separator: ", "))."
         }
     }
 }

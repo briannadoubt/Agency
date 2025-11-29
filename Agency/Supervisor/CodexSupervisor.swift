@@ -11,18 +11,22 @@ final class CodexSupervisor {
     static let shared = CodexSupervisor()
 
     private let logger = Logger(subsystem: "dev.agency.app", category: "CodexSupervisor")
-    private let launcher: WorkerLauncher
+    private let launcher: any WorkerLaunching
     private let backoffPolicy: WorkerBackoffPolicy
+    private let capabilityChecklist: CapabilityChecklist
     private var jobs: [UUID: WorkerJob] = [:]
 
-    init(launcher: WorkerLauncher = WorkerLauncher(),
-         backoffPolicy: WorkerBackoffPolicy = WorkerBackoffPolicy()) {
+    init(launcher: any WorkerLaunching = WorkerLauncher(),
+         backoffPolicy: WorkerBackoffPolicy = WorkerBackoffPolicy(),
+         capabilityChecklist: CapabilityChecklist = CapabilityChecklist()) {
         self.launcher = launcher
         self.backoffPolicy = backoffPolicy
+        self.capabilityChecklist = capabilityChecklist
     }
 
     /// Registers both the supervisor and worker SMAppService plists so that launchd can start them on demand.
     func registerIfNeeded() throws {
+        try ensureCapabilities()
 #if canImport(ServiceManagement)
         try launcher.registerSupervisorPlistIfNeeded()
         try launcher.registerWorkerPlistIfNeeded()
@@ -61,6 +65,15 @@ final class CodexSupervisor {
     /// Exposes the configured retry/backoff policy so the scheduler can mirror it.
     func backoffDelay(afterFailures failures: Int) -> Duration {
         backoffPolicy.delay(forFailureCount: failures)
+    }
+
+    // MARK: - Helpers
+
+    private func ensureCapabilities() throws {
+        let missing = capabilityChecklist.missingCapabilities().map(\.rawValue)
+        guard missing.isEmpty else {
+            throw CodexSupervisorError.capabilitiesMissing(missing)
+        }
     }
 }
 

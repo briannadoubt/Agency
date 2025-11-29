@@ -178,9 +178,10 @@ final class AgentSchedulerTests: XCTestCase {
         let midSnapshot = await scheduler.snapshot()
         XCTAssertEqual(midSnapshot.lockedCards, ["project/phase-5-agent/in-progress/5.8-retry.md"])
 
-        await Task.yield()
-
-        // Retry launches successfully (launch count increments to 2).
+        // Give the scheduled retry a brief moment to run.
+        for _ in 0..<5 where launcher.launched.count < 2 {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
         XCTAssertEqual(launcher.launched.count, 2)
 
         await scheduler.finish(runID: runID, outcome: .succeeded)

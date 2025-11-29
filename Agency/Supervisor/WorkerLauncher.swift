@@ -4,9 +4,18 @@ import os.log
 import ServiceManagement
 #endif
 
+@MainActor
+protocol WorkerLaunching: AnyObject {
+    func registerSupervisorPlistIfNeeded() throws
+    func registerWorkerPlistIfNeeded() throws
+    func launch(request: CodexRunRequest) async throws -> WorkerEndpoint
+    func activeProcess(for runID: UUID) -> Process?
+    func cancel(job: any JobHandle) async
+}
+
 /// Encapsulates the SMAppService registration and per-run worker launch lifecycle.
 @MainActor
-final class WorkerLauncher {
+final class WorkerLauncher: WorkerLaunching {
     private enum Constants {
         static let supervisorPlist = "CodexSupervisor"
         static let workerPlist = "CodexWorker"
@@ -15,12 +24,18 @@ final class WorkerLauncher {
     }
 
     private let fileManager: FileManager
+    private let workerBinaryOverride: URL?
+    private let processFactory: () -> Process
     private let logger = Logger(subsystem: "dev.agency.app", category: "WorkerLauncher")
     private var processes: [UUID: Process] = [:]
     private var runDirectories: [UUID: RunDirectories] = [:]
 
-    init(fileManager: FileManager = .default) {
+    init(fileManager: FileManager = .default,
+         workerBinaryOverride: URL? = nil,
+         processFactory: @escaping () -> Process = { Process() }) {
         self.fileManager = fileManager
+        self.workerBinaryOverride = workerBinaryOverride
+        self.processFactory = processFactory
     }
 
     // MARK: Registration
@@ -63,7 +78,7 @@ final class WorkerLauncher {
         let endpoint = WorkerEndpoint(runID: request.runID,
                                       bootstrapName: bootstrapName(for: request.runID))
 
-        guard let workerBinary = locateWorkerBinary() else {
+        guard let workerBinary = resolveWorkerBinary() else {
             cleanupOutputs(for: scopedRequest.runID)
             throw CodexSupervisorError.workerBinaryMissing
         }
@@ -76,7 +91,7 @@ final class WorkerLauncher {
             throw error
         }
 
-        let process = Process()
+        let process = processFactory()
         process.executableURL = workerBinary
         process.arguments = ["--run-id", scopedRequest.runID.uuidString,
                              "--endpoint", endpoint.bootstrapName,
@@ -144,6 +159,13 @@ final class WorkerLauncher {
 
     private func bootstrapName(for runID: UUID) -> String {
         "\(Constants.workerLabelPrefix).\(runID.uuidString)"
+    }
+
+    private func resolveWorkerBinary() -> URL? {
+        if let workerBinaryOverride {
+            return workerBinaryOverride
+        }
+        return locateWorkerBinary()
     }
 
     private func locateWorkerBinary() -> URL? {
