@@ -467,7 +467,8 @@ struct CardDetailModal: View {
     }
 
     private func handleRun(flow: AgentFlow) async {
-        let result = await agentRunner.startRun(card: currentCard, flow: flow)
+        let backend: AgentBackendKind = (flow == .plan) ? .cli : .codex
+        let result = await agentRunner.startRun(card: currentCard, flow: flow, backend: backend)
         await MainActor.run {
             switch result {
             case .success:

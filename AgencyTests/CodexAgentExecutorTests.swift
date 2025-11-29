@@ -147,6 +147,36 @@ final class CodexAgentExecutorTests: XCTestCase {
         XCTAssertFalse(result.summary.isEmpty)
     }
 
+    func testCleanupRemovesOutputsAfterSuccess() async throws {
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let logURL = temp.appendingPathComponent("worker.log")
+        let outputDirectory = temp.appendingPathComponent("tmp", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        let request = makeRequest(logDirectory: temp)
+
+        let streamer = StubStreamer(events: [
+            .finished(WorkerRunResult(status: .succeeded,
+                                      exitCode: 0,
+                                      duration: 0.1,
+                                      bytesRead: 0,
+                                      bytesWritten: 0,
+                                      summary: "ok"))
+        ])
+
+        let client = StubSupervisorClient { _ in
+            .success(WorkerEndpoint(runID: request.runID, bootstrapName: "test"))
+        }
+
+        let executor = CodexAgentExecutor(client: client, streamer: streamer)
+
+        await executor.run(request: request,
+                           logURL: logURL,
+                           outputDirectory: outputDirectory) { _ in }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputDirectory.path))
+        XCTAssertEqual(client.canceledRunIDs, [request.runID])
+    }
+
     // MARK: - Helpers
 
     private func makeRequest(logDirectory: URL) -> CodexRunRequest {

@@ -3,6 +3,9 @@ import os.log
 #if canImport(ServiceManagement)
 import ServiceManagement
 #endif
+#if canImport(Darwin)
+import Darwin
+#endif
 
 @MainActor
 protocol WorkerLaunching: AnyObject {
@@ -122,7 +125,8 @@ final class WorkerLauncher: WorkerLaunching {
 
     func cancel(job: any JobHandle) async {
         if let process = processes[job.runID] {
-            process.terminate()
+            await ensureTermination(of: process, runID: job.runID)
+            processes[job.runID] = nil
         }
         cleanupOutputs(for: job.runID)
     }
@@ -188,6 +192,33 @@ final class WorkerLauncher: WorkerLaunching {
     private func cleanupOutputs(for runID: UUID) {
         guard let directories = runDirectories.removeValue(forKey: runID) else { return }
         directories.cleanupOutputs(using: fileManager)
+    }
+
+    private func ensureTermination(of process: Process,
+                                   runID: UUID,
+                                   timeout: Duration = .seconds(1)) async {
+        process.terminate()
+
+        let start = Date()
+        let timeoutSeconds = seconds(from: timeout)
+
+        while process.isRunning && Date().timeIntervalSince(start) < timeoutSeconds {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+
+        if process.isRunning {
+#if canImport(Darwin)
+            let pid = process.processIdentifier
+            if pid > 0 {
+                kill(pid, SIGKILL)
+            }
+#endif
+        }
+    }
+
+    private func seconds(from duration: Duration) -> TimeInterval {
+        let components = duration.components
+        return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000.0
     }
 }
 
