@@ -17,6 +17,7 @@ struct ContentView: View {
         let loader = ProjectLoader()
         _loader = State(initialValue: loader)
         _agentRunner = State(initialValue: AgentRunner(projectLoader: loader))
+        AppIntentsProjectAccess.shared.register(loader)
     }
 
     var body: some View {
