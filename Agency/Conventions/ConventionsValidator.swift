@@ -59,11 +59,17 @@ enum ProjectConventions {
 struct ConventionsValidator {
     private let fileManager: FileManager
     private let parser: CardFileParser
+    private let roadmapParser: RoadmapParser
+    private let architectureParser: ArchitectureParser
 
     init(fileManager: FileManager = .default,
-         parser: CardFileParser = CardFileParser()) {
+         parser: CardFileParser = CardFileParser(),
+         roadmapParser: RoadmapParser = RoadmapParser(),
+         architectureParser: ArchitectureParser = ArchitectureParser()) {
         self.fileManager = fileManager
         self.parser = parser
+        self.roadmapParser = roadmapParser
+        self.architectureParser = architectureParser
     }
 
     /// Validates the repository at the given root URL.
@@ -72,6 +78,7 @@ struct ConventionsValidator {
         var issues: [ValidationIssue] = []
         let projectURL = rootURL.appendingPathComponent(ProjectConventions.projectRootName)
         var cards: [(code: String, path: String)] = []
+        var parsedCards: [Card] = []
 
         guard directoryExists(at: projectURL) else {
             issues.append(ValidationIssue(path: relativePath(of: projectURL, from: rootURL),
@@ -80,6 +87,17 @@ struct ConventionsValidator {
                                           suggestedFix: "Create a project/ folder containing phase-<n>-<name> directories."))
             return issues
         }
+
+        let roadmapURL = rootURL.appendingPathComponent("ROADMAP.md")
+        let roadmapDocument = validateRoadmap(at: roadmapURL,
+                                              rootURL: rootURL,
+                                              issues: &issues)
+
+        let architectureURL = rootURL.appendingPathComponent("ARCHITECTURE.md")
+        let architectureDocument = validateArchitecture(at: architectureURL,
+                                                        rootURL: rootURL,
+                                                        roadmap: roadmapDocument,
+                                                        issues: &issues)
 
         let phaseDirectories = directories(at: projectURL)
             .filter { phaseDirectoryNameIsValid($0.lastPathComponent) }
@@ -93,19 +111,35 @@ struct ConventionsValidator {
         }
 
         for phaseURL in phaseDirectories {
-            let (phaseIssues, phaseCards) = validatePhase(at: phaseURL, rootURL: rootURL)
+            let (phaseIssues, phaseCards, parsed) = validatePhase(at: phaseURL, rootURL: rootURL)
             issues.append(contentsOf: phaseIssues)
             cards.append(contentsOf: phaseCards)
+            parsedCards.append(contentsOf: parsed)
         }
 
         issues.append(contentsOf: duplicateCodeIssues(from: cards))
 
+        if let roadmapDocument {
+            let codes = Set(cards.map { $0.code })
+            issues.append(contentsOf: validateRoadmapTasks(roadmapDocument,
+                                                           cards: parsedCards,
+                                                           codesOnDisk: codes,
+                                                           rootURL: rootURL))
+        }
+
+        if let roadmapDocument, let architectureDocument {
+            issues.append(contentsOf: validateArchitectureFreshness(architectureDocument,
+                                                                    roadmap: roadmapDocument,
+                                                                    rootURL: rootURL))
+        }
+
         return issues
     }
 
-    private func validatePhase(at phaseURL: URL, rootURL: URL) -> ([ValidationIssue], [(code: String, path: String)]) {
+    private func validatePhase(at phaseURL: URL, rootURL: URL) -> ([ValidationIssue], [(code: String, path: String)], [Card]) {
         var issues: [ValidationIssue] = []
         var cards: [(code: String, path: String)] = []
+        var parsedCards: [Card] = []
 
         let statusFolders = Set(CardStatus.allCases.map { $0.folderName })
 
@@ -130,17 +164,19 @@ struct ConventionsValidator {
                 continue
             }
 
-            let (cardIssues, scannedCards) = validateCards(in: statusURL, rootURL: rootURL)
+            let (cardIssues, scannedCards, parsed) = validateCards(in: statusURL, rootURL: rootURL)
             issues.append(contentsOf: cardIssues)
             cards.append(contentsOf: scannedCards)
+            parsedCards.append(contentsOf: parsed)
         }
 
-        return (issues, cards)
+        return (issues, cards, parsedCards)
     }
 
-    private func validateCards(in statusURL: URL, rootURL: URL) -> ([ValidationIssue], [(code: String, path: String)]) {
+    private func validateCards(in statusURL: URL, rootURL: URL) -> ([ValidationIssue], [(code: String, path: String)], [Card]) {
         var issues: [ValidationIssue] = []
         var cards: [(code: String, path: String)] = []
+        var parsedCards: [Card] = []
 
         for entry in files(at: statusURL) {
             let name = entry.lastPathComponent
@@ -167,6 +203,7 @@ struct ConventionsValidator {
 
             do {
                 let card = try parser.parse(fileURL: entry, contents: contents)
+                parsedCards.append(card)
                 issues.append(contentsOf: structuralIssues(for: card, rootURL: rootURL))
             } catch {
                 issues.append(ValidationIssue(path: relativePath(of: entry, from: rootURL),
@@ -176,7 +213,167 @@ struct ConventionsValidator {
             }
         }
 
-        return (issues, cards)
+        return (issues, cards, parsedCards)
+    }
+
+    private func validateRoadmap(at roadmapURL: URL,
+                                 rootURL: URL,
+                                 issues: inout [ValidationIssue]) -> RoadmapDocument? {
+        guard fileManager.fileExists(atPath: roadmapURL.path) else {
+            issues.append(ValidationIssue(path: relativePath(of: roadmapURL, from: rootURL),
+                                          message: "Missing ROADMAP.md.",
+                                          severity: .error,
+                                          suggestedFix: "Generate ROADMAP.md or run the initializer with a goal/roadmap."))
+            return nil
+        }
+
+        do {
+            let contents = try String(contentsOf: roadmapURL, encoding: .utf8)
+            let parsed = roadmapParser.parse(contents: contents)
+            guard let document = parsed.document else {
+                issues.append(ValidationIssue(path: relativePath(of: roadmapURL, from: rootURL),
+                                              message: "ROADMAP.md is missing a valid machine-readable block.",
+                                              severity: .error,
+                                              suggestedFix: "Ensure the 'Roadmap (machine readable)' JSON exists or regenerate the roadmap."))
+                return nil
+            }
+
+            if document.phases.isEmpty {
+                issues.append(ValidationIssue(path: relativePath(of: roadmapURL, from: rootURL),
+                                              message: "ROADMAP.md has no phases.",
+                                              severity: .error,
+                                              suggestedFix: "Add at least one phase to the roadmap."))
+            }
+
+            if document.projectGoal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                issues.append(ValidationIssue(path: relativePath(of: roadmapURL, from: rootURL),
+                                              message: "ROADMAP.md is missing a project goal.",
+                                              severity: .warning,
+                                              suggestedFix: "Populate project_goal and regenerate the roadmap."))
+            }
+
+            return document
+        } catch {
+            issues.append(ValidationIssue(path: relativePath(of: roadmapURL, from: rootURL),
+                                          message: "Unable to read ROADMAP.md: \(error.localizedDescription)",
+                                          severity: .error,
+                                          suggestedFix: "Check file permissions and encoding."))
+            return nil
+        }
+    }
+
+    private func validateArchitecture(at architectureURL: URL,
+                                      rootURL: URL,
+                                      roadmap: RoadmapDocument?,
+                                      issues: inout [ValidationIssue]) -> ArchitectureDocument? {
+        guard fileManager.fileExists(atPath: architectureURL.path) else {
+            issues.append(ValidationIssue(path: relativePath(of: architectureURL, from: rootURL),
+                                          message: "Missing ARCHITECTURE.md.",
+                                          severity: .error,
+                                          suggestedFix: "Run the initializer or architecture generator to create ARCHITECTURE.md."))
+            return nil
+        }
+
+        do {
+            let contents = try String(contentsOf: architectureURL, encoding: .utf8)
+            let parsed = architectureParser.parse(contents: contents)
+            guard let document = parsed.document else {
+                issues.append(ValidationIssue(path: relativePath(of: architectureURL, from: rootURL),
+                                              message: "ARCHITECTURE.md is missing a valid machine-readable block.",
+                                              severity: .error,
+                                              suggestedFix: "Ensure the 'Architecture (machine readable)' JSON exists or regenerate ARCHITECTURE.md."))
+                return nil
+            }
+
+            if document.phases.isEmpty {
+                issues.append(ValidationIssue(path: relativePath(of: architectureURL, from: rootURL),
+                                              message: "ARCHITECTURE.md has no phases.",
+                                              severity: .warning,
+                                              suggestedFix: "Regenerate architecture from the roadmap."))
+            }
+
+            if document.projectGoal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                issues.append(ValidationIssue(path: relativePath(of: architectureURL, from: rootURL),
+                                              message: "ARCHITECTURE.md is missing the project goal.",
+                                              severity: .warning,
+                                              suggestedFix: "Regenerate architecture from roadmap to include project_goal."))
+            }
+
+            return document
+        } catch {
+            issues.append(ValidationIssue(path: relativePath(of: architectureURL, from: rootURL),
+                                          message: "Unable to read ARCHITECTURE.md: \(error.localizedDescription)",
+                                          severity: .error,
+                                          suggestedFix: "Check file permissions and encoding."))
+            return nil
+        }
+    }
+
+    private func validateArchitectureFreshness(_ architecture: ArchitectureDocument,
+                                               roadmap: RoadmapDocument,
+                                               rootURL: URL) -> [ValidationIssue] {
+        let expected = ArchitectureGenerator.fingerprint(for: roadmap)
+        guard architecture.roadmapFingerprint != expected else { return [] }
+
+        return [ValidationIssue(path: "ARCHITECTURE.md",
+                                message: "ARCHITECTURE.md is out of date with ROADMAP.md (fingerprint mismatch).",
+                                severity: .warning,
+                                suggestedFix: "Regenerate ARCHITECTURE.md after updating ROADMAP.md." )]
+    }
+
+    private func validateRoadmapTasks(_ roadmap: RoadmapDocument,
+                                      cards: [Card],
+                                      codesOnDisk: Set<String>,
+                                      rootURL: URL) -> [ValidationIssue] {
+        var issues: [ValidationIssue] = []
+        var cardsByCode: [String: Card] = [:]
+        for card in cards where cardsByCode[card.code] == nil {
+            cardsByCode[card.code] = card
+        }
+
+        for phase in roadmap.phases {
+            for task in phase.tasks {
+                let phasePath = "project/phase-\(phase.number)-\(phase.label)"
+                if !codesOnDisk.contains(task.code) {
+                    issues.append(ValidationIssue(path: phasePath,
+                                                  message: "Missing card for roadmap task \(task.code) \(task.title).",
+                                                  severity: .error,
+                                                  suggestedFix: "Run task materializer/initializer to generate cards."))
+                    continue
+                }
+
+                guard let card = cardsByCode[task.code] else { continue }
+
+                if card.status.folderName != task.status {
+                    issues.append(ValidationIssue(path: relativePath(of: card.filePath, from: rootURL),
+                                                  message: "Task \(task.code) expected in \(task.status) but card is in \(card.status.folderName).",
+                                                  severity: .warning,
+                                                  suggestedFix: "Move the card or update the roadmap status to match."))
+                }
+
+                if card.title?.contains(task.title) == false {
+                    issues.append(ValidationIssue(path: relativePath(of: card.filePath, from: rootURL),
+                                                  message: "Card title for \(task.code) does not reflect roadmap task title \(task.title).",
+                                                  severity: .warning,
+                                                  suggestedFix: "Align the card heading with the roadmap task title."))
+                }
+
+                if !task.acceptanceCriteria.isEmpty {
+                    let missingCriteria = task.acceptanceCriteria.filter { criterion in
+                        !card.acceptanceCriteria.contains(where: { $0.title == criterion })
+                    }
+
+                    if !missingCriteria.isEmpty {
+                        issues.append(ValidationIssue(path: relativePath(of: card.filePath, from: rootURL),
+                                                      message: "Card for \(task.code) is missing roadmap acceptance criteria: \(missingCriteria.joined(separator: ", ")).",
+                                                      severity: .warning,
+                                                      suggestedFix: "Regenerate the card or add the missing acceptance criteria."))
+                    }
+                }
+            }
+        }
+
+        return issues
     }
 
     private func structuralIssues(for card: Card, rootURL: URL) -> [ValidationIssue] {

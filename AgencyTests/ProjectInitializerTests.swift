@@ -122,6 +122,138 @@ final class ProjectInitializerTests: XCTestCase {
 
         XCTAssertFalse(fm.fileExists(atPath: root.appendingPathComponent("ARCHITECTURE.md").path))
     }
+
+    func testInitializerAndMaterializerEndToEndInEmptyDirectory() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        let roadmap = integrationRoadmapDocument()
+        let roadmapMarkdown = RoadmapRenderer().render(document: roadmap,
+                                                       history: ["- 2025-11-29: seeded"],
+                                                       manualNotes: roadmap.manualNotes)
+        try roadmapMarkdown.write(to: root.appendingPathComponent("ROADMAP.md"), atomically: true, encoding: .utf8)
+
+        let initializer = ProjectInitializer(fileManager: fm,
+                                             parser: RoadmapParser(),
+                                             generator: RoadmapGenerator(fileManager: fm,
+                                                                         scanner: ProjectScanner(fileManager: fm,
+                                                                                                 parser: CardFileParser()),
+                                                                         parser: RoadmapParser(),
+                                                                         renderer: RoadmapRenderer()),
+                                             architectureGenerator: ArchitectureGenerator(fileManager: fm,
+                                                                                           roadmapParser: RoadmapParser(),
+                                                                                           parser: ArchitectureParser(),
+                                                                                           renderer: ArchitectureRenderer(),
+                                                                                           dateProvider: { self.fixedDate() }))
+        let options = ProjectInitializationOptions(projectRoot: root,
+                                                   dryRun: false,
+                                                   applyChanges: true,
+                                                   architectureInputs: ArchitectureInput(targetPlatforms: ["macOS"],
+                                                                                         languages: ["Swift"],
+                                                                                         techStack: ["SwiftUI"]))
+        let initResult = try initializer.initialize(options: options)
+
+        XCTAssertFalse(initResult.dryRun)
+        XCTAssertTrue(fm.fileExists(atPath: root.appendingPathComponent("ARCHITECTURE.md").path))
+
+        let materializer = RoadmapTaskMaterializer(fileManager: fm,
+                                                   parser: RoadmapParser(),
+                                                   cardParser: CardFileParser(),
+                                                   writer: CardMarkdownWriter(),
+                                                   validator: ConventionsValidator(fileManager: fm, parser: CardFileParser()))
+
+        let materializeResult = try materializer.materialize(options: TaskMaterializationOptions(projectRoot: root, dryRun: false))
+
+        XCTAssertFalse(materializeResult.created.isEmpty)
+
+        let validationIssues = ConventionsValidator(fileManager: fm).validateProject(at: root)
+
+        XCTAssertTrue(validationIssues.isEmpty)
+    }
+
+    func testInitializerIsIdempotentWithExistingCards() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        let roadmap = integrationRoadmapDocument()
+        let roadmapMarkdown = RoadmapRenderer().render(document: roadmap,
+                                                       history: ["- 2025-11-29: seeded"],
+                                                       manualNotes: roadmap.manualNotes)
+        try roadmapMarkdown.write(to: root.appendingPathComponent("ROADMAP.md"), atomically: true, encoding: .utf8)
+
+        let project = root.appendingPathComponent("project/phase-1-bootstrap/backlog", isDirectory: true)
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        let existingCard = project.appendingPathComponent("1.1-bootstrap.md")
+        let existingContents = """
+        ---
+        owner: bri
+        ---
+
+        # 1.1 Bootstrap
+
+        Summary:
+        keep custom notes
+
+        Acceptance Criteria:
+        - [ ] create skeleton
+
+        Notes:
+        manual note
+
+        History:
+        - 2025-11-28: drafted manually
+        """
+        try existingContents.write(to: existingCard, atomically: true, encoding: .utf8)
+
+        let initializer = ProjectInitializer(fileManager: fm,
+                                             parser: RoadmapParser(),
+                                             generator: RoadmapGenerator(fileManager: fm,
+                                                                         scanner: ProjectScanner(fileManager: fm,
+                                                                                                 parser: CardFileParser()),
+                                                                         parser: RoadmapParser(),
+                                                                         renderer: RoadmapRenderer()),
+                                             architectureGenerator: ArchitectureGenerator(fileManager: fm,
+                                                                                           roadmapParser: RoadmapParser(),
+                                                                                           parser: ArchitectureParser(),
+                                                                                           renderer: ArchitectureRenderer(),
+                                                                                           dateProvider: { self.fixedDate() }))
+
+        let preview = try initializer.initialize(options: ProjectInitializationOptions(projectRoot: root,
+                                                                                       dryRun: true,
+                                                                                       applyChanges: false))
+
+        XCTAssertTrue(preview.dryRun)
+        XCTAssertTrue(preview.skipped.contains { $0.contains("project/phase-1-bootstrap") })
+
+        let applied = try initializer.initialize(options: ProjectInitializationOptions(projectRoot: root,
+                                                                                      dryRun: false,
+                                                                                      applyChanges: true,
+                                                                                      architectureInputs: ArchitectureInput(targetPlatforms: [],
+                                                                                                                            languages: [],
+                                                                                                                            techStack: [])))
+
+        XCTAssertTrue(applied.createdFiles.contains { $0 == "ARCHITECTURE.md" })
+
+        let materializer = RoadmapTaskMaterializer(fileManager: fm,
+                                                   parser: RoadmapParser(),
+                                                   cardParser: CardFileParser(),
+                                                   writer: CardMarkdownWriter(),
+                                                   validator: ConventionsValidator(fileManager: fm, parser: CardFileParser()))
+        _ = try materializer.materialize(options: TaskMaterializationOptions(projectRoot: root, dryRun: false))
+        let second = try materializer.materialize(options: TaskMaterializationOptions(projectRoot: root, dryRun: false))
+
+        XCTAssertTrue(second.created.isEmpty)
+
+        let issues = ConventionsValidator(fileManager: fm).validateProject(at: root)
+        XCTAssertTrue(issues.isEmpty)
+
+        let updatedCard = try String(contentsOf: existingCard, encoding: .utf8)
+        XCTAssertTrue(updatedCard.contains("drafted manually"))
+    }
 }
 
 // MARK: - Helpers
@@ -178,6 +310,39 @@ private func sampleRoadmap() -> String {
     History:
     - 2025-11-29: seeded
     """
+}
+
+private func integrationRoadmapDocument() -> RoadmapDocument {
+    let tasks = [
+        RoadmapTaskEntry(code: "1.1",
+                         title: "Bootstrap",
+                         summary: "Create skeleton",
+                         owner: "bri",
+                         risk: "normal",
+                         status: CardStatus.backlog.folderName,
+                         acceptanceCriteria: ["create skeleton"],
+                         parallelizable: false),
+        RoadmapTaskEntry(code: "1.2",
+                         title: "Wire",
+                         summary: "Connect paths",
+                         owner: "bri",
+                         risk: "normal",
+                         status: CardStatus.inProgress.folderName,
+                         acceptanceCriteria: ["connect cli"],
+                         parallelizable: false)
+    ]
+
+    let phase = RoadmapPhaseEntry(number: 1,
+                                  label: "bootstrap",
+                                  status: .planned,
+                                  summary: "Bootstrap the project",
+                                  tasks: tasks)
+
+    return RoadmapDocument(version: 1,
+                            projectGoal: "Integration bootstrap",
+                            generatedAt: "2025-11-29",
+                            phases: [phase],
+                            manualNotes: "")
 }
 
 private extension ProjectInitializerTests {

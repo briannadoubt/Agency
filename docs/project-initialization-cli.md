@@ -33,3 +33,10 @@ Create a new project folder from a template roadmap:
 ```
 project-init --project-root /repo-new --roadmap /templates/ROADMAP.md --yes
 ```
+
+## Failure Modes & Recovery
+- Missing or invalid `ROADMAP.md`: run `project-init --project-root <path> --goal "<brief>"` to regenerate, or fix the `Roadmap (machine readable)` JSON block.
+- Missing `ARCHITECTURE.md` or fingerprint mismatch: regenerate with `project-init --project-root <path> --yes` (or `architecture-generate` if available) after updating the roadmap.
+- Cards not aligned to the roadmap: run the task materializer to rebuild cards from `ROADMAP.md`; rerun with `--dry-run` first to review moves/updates.
+- Existing files you don't want overwritten: rely on the default dry-run to preview changes; add `--yes` only after reviewing the plan.
+- Partial writes or dirty worktree: clean up temp folders, rerun in dry-run to confirm expected changes, then reapply.
