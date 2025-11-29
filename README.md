@@ -21,6 +21,25 @@ Agent-assisted kanban for macOS, powered by Markdown cards under `project/phase-
 ## CLI plan scaffolding
 - See `docs/phase-scaffolding-cli.md` for arguments, exit codes, and examples of the underlying CLI used by the app.
 
+## Siri & Shortcuts Integration
+
+Agency supports Siri and the Shortcuts app for hands-free kanban management.
+
+### Available Commands
+| Command | Description | Example Phrase |
+|---------|-------------|----------------|
+| List Cards | Query cards, optionally by status or phase | "List cards in Agency" |
+| Project Status | Get card counts by status | "Project status in Agency" |
+| Move Card | Move a card to a new status | "Move card in Agency" |
+| Create Card | Create a new backlog card | "Create card in Agency" |
+| Open Card | Open a specific card in the app | "Open card in Agency" |
+
+### Setup
+The Siri entitlement is included. On first launch, Shortcuts should recognize Agency's intents automatically. You can also add them manually in the Shortcuts app.
+
+### Spotlight Search
+Cards are indexed in Spotlight when viewed. Search by card code (e.g., "1.3") or title keywords to find cards quickly.
+
 ## Running tests
 ```
 xcodebuild -scheme Agency -destination 'platform=macOS' test

@@ -61,3 +61,12 @@ Always check the name of the branch and find the corresponding task file and mak
 ## Security & Configuration Notes
 - Never commit secrets, personal simulator data, or `DerivedData`; share schemes in `Agency.xcodeproj/xcshareddata`.
 - Update card `History` (YYYY-MM-DD) for task file edits; keep status aligned with folder location.
+
+## AppIntents Integration
+- All intents live in `Agency/AppIntents/`.
+- `AgencyShortcuts` provides App Shortcuts for Siri and the Shortcuts app.
+- Use `@MainActor` for all intent `perform()` methods that access ProjectLoader.
+- `AppIntentsProjectAccess.shared` bridges intents to the running app's state.
+- `CardEntity` is the AppEntity for cards; `CardStatusAppEnum` for status filtering.
+- Entitlements: `com.apple.developer.siri` enabled in `Agency.entitlements`.
+- Available intents: ListCardsIntent, ProjectStatusIntent, MoveCardIntent, CreateCardIntent, OpenCardIntent.
