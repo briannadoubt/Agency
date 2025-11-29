@@ -37,6 +37,7 @@ struct RoadmapGenerationResult: Equatable {
     let roadmapURL: URL
     let document: RoadmapDocument
     let history: [String]
+    let markdown: String
 }
 
 enum RoadmapGenerationError: LocalizedError, Equatable {
@@ -252,7 +253,9 @@ struct RoadmapGenerator {
         self.dateProvider = dateProvider
     }
 
-    func generate(goal: String, at rootURL: URL) throws -> RoadmapGenerationResult {
+    func generate(goal: String,
+                 at rootURL: URL,
+                 writeToDisk: Bool = true) throws -> RoadmapGenerationResult {
         guard !goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw RoadmapGenerationError.emptyGoal
         }
@@ -274,11 +277,14 @@ struct RoadmapGenerator {
         let history = mergeHistory(existing?.history ?? [],
                                    newEntry: "- \(today): Regenerated roadmap from goal: \(goal)")
         let markdown = renderer.render(document: document, history: history, manualNotes: document.manualNotes)
-        try markdown.write(to: roadmapURL, atomically: true, encoding: String.Encoding.utf8)
+        if writeToDisk {
+            try markdown.write(to: roadmapURL, atomically: true, encoding: String.Encoding.utf8)
+        }
 
         return RoadmapGenerationResult(roadmapURL: roadmapURL,
                                        document: document,
-                                       history: history)
+                                       history: history,
+                                       markdown: markdown)
     }
 
     private func makePhaseEntry(from snapshot: PhaseSnapshot) -> RoadmapPhaseEntry {
