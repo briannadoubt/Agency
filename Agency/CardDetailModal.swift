@@ -146,6 +146,7 @@ struct CardDetailModal: View {
                maxHeight: .infinity)
         .task {
             await loadSnapshot()
+            CardUserActivity.donate(for: card, phase: phase)
         }
         .onChange(of: card) { _, _ in
             Task { await handleExternalCardUpdate() }

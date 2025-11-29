@@ -45,5 +45,16 @@ struct AgencyShortcuts: AppShortcutsProvider {
             shortTitle: "Create Card",
             systemImageName: "plus.rectangle"
         )
+
+        AppShortcut(
+            intent: OpenCardIntent(),
+            phrases: [
+                "Open card in \(.applicationName)",
+                "Show card in \(.applicationName)",
+                "View card in \(.applicationName)"
+            ],
+            shortTitle: "Open Card",
+            systemImageName: "doc.text"
+        )
     }
 }

@@ -1,12 +1,17 @@
 import Foundation
+import Observation
 
 /// Singleton providing access to the current project snapshot for AppIntents.
 /// This bridges the MainActor-isolated ProjectLoader with the AppIntents framework.
 @MainActor
+@Observable
 final class AppIntentsProjectAccess {
     static let shared = AppIntentsProjectAccess()
 
     private weak var projectLoader: ProjectLoader?
+
+    /// Request to navigate to a specific card (set by OpenCardIntent, observed by ContentView).
+    var pendingNavigationCardPath: String?
 
     private init() {}
 
@@ -39,5 +44,15 @@ final class AppIntentsProjectAccess {
             return .failure(.snapshotUnavailable)
         }
         return await loader.createCard(in: phase, title: title, includeHistoryEntry: true)
+    }
+
+    /// Request navigation to a card (called by OpenCardIntent).
+    func requestNavigation(toCardPath path: String) {
+        pendingNavigationCardPath = path
+    }
+
+    /// Clear the pending navigation request (called by ContentView after handling).
+    func clearNavigationRequest() {
+        pendingNavigationCardPath = nil
     }
 }

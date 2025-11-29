@@ -12,6 +12,7 @@ struct ContentView: View {
     @State private var importError: String?
     @State private var didAutoLoadProject = false
     @State private var planFlowEnabled = FeatureFlags.planFlowEnabled
+    @State private var deepLinkCardPath: String?
 
     init() {
         let loader = ProjectLoader()
@@ -87,6 +88,7 @@ struct ContentView: View {
             DetailView(loader: loader,
                        snapshot: loader.loadedSnapshot,
                        selectedPhaseNumber: $selectedPhaseNumber,
+                       deepLinkCardPath: $deepLinkCardPath,
                        onAddPhase: {
                            guard planFlowEnabled else {
                                importError = "Phase creation is disabled via AGENCY_DISABLE_PLAN_FLOW."
@@ -153,6 +155,21 @@ struct ContentView: View {
                 phaseCreationController.errorMessage = nil
             }
         }
+        .onChange(of: AppIntentsProjectAccess.shared.pendingNavigationCardPath) { _, cardPath in
+            guard let cardPath, let snapshot = loader.loadedSnapshot else { return }
+
+            // Find the phase containing this card and navigate to it
+            for phaseSnapshot in snapshot.phases {
+                if phaseSnapshot.cards.contains(where: { $0.filePath.path == cardPath }) {
+                    selectedPhaseNumber = phaseSnapshot.phase.number
+                    deepLinkCardPath = cardPath
+                    break
+                }
+            }
+
+            // Clear the navigation request
+            AppIntentsProjectAccess.shared.clearNavigationRequest()
+        }
         .alert("Unable to open folder", isPresented: Binding(get: { importError != nil },
                                                             set: { newValue in
                                                                 if !newValue {
@@ -170,6 +187,7 @@ private struct DetailView: View {
     let loader: ProjectLoader
     let snapshot: ProjectLoader.ProjectSnapshot?
     @Binding var selectedPhaseNumber: Int?
+    @Binding var deepLinkCardPath: String?
     let onAddPhase: () -> Void
 
     var body: some View {
@@ -186,6 +204,7 @@ private struct DetailView: View {
                             EmptyPhasePlaceholder(onAddPhase: onAddPhase)
                         } else if let phase = selectedPhase(from: snapshot) {
                             PhaseDetail(phase: phase,
+                                       deepLinkCardPath: $deepLinkCardPath,
                                        onMove: { card, status, logHistory in
                                            await loader.moveCard(card,
                                                                  to: status,
@@ -379,6 +398,7 @@ private struct ValidationIssuesView: View {
 
 private struct PhaseDetail: View {
     let phase: PhaseSnapshot
+    @Binding var deepLinkCardPath: String?
     let onMove: (Card, CardStatus, Bool) async -> Result<Void, CardMoveError>
     let onToggleCriterion: (Card, Int) async -> Result<Void, Error>
     let onCreateCard: (String, Bool) async -> Result<Card, CardCreationError>
@@ -543,6 +563,15 @@ private struct PhaseDetail: View {
             } else {
                 self.selectedCardPath = nil
                 isShowingDetailModal = false
+            }
+        }
+        .onChange(of: deepLinkCardPath) { _, cardPath in
+            guard let cardPath else { return }
+            // Check if this card belongs to this phase
+            if cardsByPath[cardPath] != nil {
+                selectedCardPath = cardPath
+                isShowingDetailModal = true
+                deepLinkCardPath = nil
             }
         }
     }
