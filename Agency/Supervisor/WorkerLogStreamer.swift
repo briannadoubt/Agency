@@ -74,6 +74,7 @@ struct WorkerLogStreamer {
     private func waitForFile(at url: URL, timeout: TimeInterval = 5.0) async throws {
         let start = Date()
         while !FileManager.default.fileExists(atPath: url.path) {
+            try Task.checkCancellation()
             if Date().timeIntervalSince(start) > timeout {
                 throw WorkerLogStreamError.fileMissing
             }

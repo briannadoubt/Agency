@@ -48,4 +48,100 @@ struct WorkerLauncherTests {
 
         try? fm.removeItem(at: root)
     }
+
+    @Test func cancelTerminatesProcessAndCleansOutputs() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("agency-worker-cancel-\(UUID().uuidString)",
+                                                                isDirectory: true)
+        let logDirectory = root.appendingPathComponent("logs", isDirectory: true)
+
+        let request = CodexRunRequest(runID: UUID(),
+                                      flow: "test",
+                                      cardRelativePath: "project/phase/card.md",
+                                      projectBookmark: Data([0x02]),
+                                      logDirectory: logDirectory,
+                                      outputDirectory: logDirectory,
+                                      allowNetwork: false,
+                                      cliArgs: [])
+
+        var processRef: MockProcess?
+        let launcher = WorkerLauncher(fileManager: fm,
+                                      workerBinaryOverride: URL(fileURLWithPath: "/usr/bin/true"),
+                                      processFactory: {
+                                          let process = MockProcess()
+                                          processRef = process
+                                          return process
+                                      })
+
+        let endpoint = try await launcher.launch(request: request)
+        #expect(endpoint.runID == request.runID)
+
+        let job = TestJob(runID: request.runID)
+        await launcher.cancel(job: job)
+
+        #expect(processRef?.terminateCalls ?? 0 >= 1)
+        #expect(processRef?.isRunning == false)
+        #expect(launcher.activeProcess(for: request.runID) == nil)
+
+        let tmp = request.outputDirectory.appendingPathComponent("tmp")
+        #expect(!fm.fileExists(atPath: tmp.path))
+        #expect(fm.fileExists(atPath: request.outputDirectory.path))
+
+        try? fm.removeItem(at: root)
+    }
+}
+
+private struct TestJob: JobHandle {
+    let runID: UUID
+}
+
+private final class MockProcess: Process, @unchecked Sendable {
+    private var runningState = false
+    private(set) var terminateCalls = 0
+    private var _executableURL: URL?
+    private var _arguments: [String]?
+    private var _environment: [String: String]?
+    private var _terminationHandler: ((Process) -> Void)?
+
+    override func run() throws {
+        runningState = true
+    }
+
+    override var executableURL: URL? {
+        get { _executableURL }
+        set { _executableURL = newValue }
+    }
+
+    override var launchPath: String? {
+        get { _executableURL?.path }
+        set { _executableURL = newValue.map(URL.init(fileURLWithPath:)) }
+    }
+
+    override var arguments: [String]? {
+        get { _arguments }
+        set { _arguments = newValue }
+    }
+
+    override var environment: [String : String]? {
+        get { _environment }
+        set { _environment = newValue }
+    }
+
+    override var terminationHandler: ((Process) -> Void)? {
+        get { _terminationHandler }
+        set { _terminationHandler = newValue }
+    }
+
+    override var isRunning: Bool {
+        runningState
+    }
+
+    override func terminate() {
+        terminateCalls += 1
+        let wasRunning = runningState
+        runningState = false
+        if wasRunning {
+            _terminationHandler?(self)
+        }
+    }
 }
