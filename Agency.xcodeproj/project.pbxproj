@@ -30,6 +30,10 @@
 		03964FCE2ED1BC16000DEA13 /* PROJECT_WORKFLOW.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = PROJECT_WORKFLOW.md; sourceTree = "<group>"; };
 		03964FF32ED3C029000DEA13 /* AGENTS.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = AGENTS.md; sourceTree = "<group>"; };
 		0396500F2ED3DE07000DEA13 /* Agency.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = Agency.xctestplan; sourceTree = "<group>"; };
+		03B83C5A2EDB9E2300802246 /* CLAUDE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = CLAUDE.md; sourceTree = "<group>"; };
+		03B83C5B2EDB9E2F00802246 /* ARCHITECTURE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = ARCHITECTURE.md; sourceTree = "<group>"; };
+		03B83C5C2EDB9E4100802246 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		03B83C5D2EDB9E4100802246 /* ROADMAP.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = ROADMAP.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -83,6 +87,10 @@
 		03964F5F2ED18013000DEA13 = {
 			isa = PBXGroup;
 			children = (
+				03B83C5C2EDB9E4100802246 /* README.md */,
+				03B83C5D2EDB9E4100802246 /* ROADMAP.md */,
+				03B83C5B2EDB9E2F00802246 /* ARCHITECTURE.md */,
+				03B83C5A2EDB9E2300802246 /* CLAUDE.md */,
 				0396500F2ED3DE07000DEA13 /* Agency.xctestplan */,
 				03964FF32ED3C029000DEA13 /* AGENTS.md */,
 				03964FCE2ED1BC16000DEA13 /* PROJECT_WORKFLOW.md */,
