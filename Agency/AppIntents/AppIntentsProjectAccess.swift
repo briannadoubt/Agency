@@ -24,4 +24,20 @@ final class AppIntentsProjectAccess {
     var isProjectLoaded: Bool {
         snapshot != nil
     }
+
+    /// Move a card to a new status.
+    func moveCard(_ card: Card, to status: CardStatus) async -> Result<Void, CardMoveError> {
+        guard let loader = projectLoader else {
+            return .failure(.snapshotUnavailable)
+        }
+        return await loader.moveCard(card, to: status, logHistoryEntry: true)
+    }
+
+    /// Create a new card in a phase.
+    func createCard(in phase: PhaseSnapshot, title: String) async -> Result<Card, CardCreationError> {
+        guard let loader = projectLoader else {
+            return .failure(.snapshotUnavailable)
+        }
+        return await loader.createCard(in: phase, title: title, includeHistoryEntry: true)
+    }
 }

@@ -24,5 +24,26 @@ struct AgencyShortcuts: AppShortcutsProvider {
             shortTitle: "Project Status",
             systemImageName: "chart.bar"
         )
+
+        AppShortcut(
+            intent: MoveCardIntent(),
+            phrases: [
+                "Move card in \(.applicationName)",
+                "Change card status in \(.applicationName)"
+            ],
+            shortTitle: "Move Card",
+            systemImageName: "arrow.right.square"
+        )
+
+        AppShortcut(
+            intent: CreateCardIntent(),
+            phrases: [
+                "Create card in \(.applicationName)",
+                "Add card to \(.applicationName)",
+                "New card in \(.applicationName)"
+            ],
+            shortTitle: "Create Card",
+            systemImageName: "plus.rectangle"
+        )
     }
 }
