@@ -75,42 +75,42 @@ Tasks:
   - Acceptance Criteria:
     - [ ] Plan accepted
   - Status: done
-- [ ] 7.1 ROADMAP Spec & Generator — Define roadmap schema and generator with validation.
+- [x] 7.1 ROADMAP Spec & Generator — Define roadmap schema and generator with validation.
   - Owner: bri
   - Risk: normal
   - Acceptance Criteria:
     - [ ] Schema + template
     - [ ] Generator + tests
-  - Status: in-progress
-- [ ] 7.2 Project Initialization CLI — Initializer for existing or new directories using roadmap.
+  - Status: done
+- [x] 7.2 Project Initialization CLI — Initializer for existing or new directories using roadmap.
   - Owner: bri
   - Risk: normal
   - Acceptance Criteria:
     - [ ] In-place init
     - [ ] New dir init
     - [ ] Dry-run
-  - Status: backlog
-- [ ] 7.3 Task Materialization from ROADMAP — Generate backlog cards from roadmap entries.
+  - Status: done
+- [x] 7.3 Task Materialization from ROADMAP — Generate backlog cards from roadmap entries.
   - Owner: bri
   - Risk: normal
   - Acceptance Criteria:
     - [ ] Materialize tasks
     - [ ] Handle regeneration
-  - Status: backlog
-- [ ] 7.4 ARCHITECTURE.md Generation — Generate architecture doc from roadmap + inputs.
+  - Status: done
+- [x] 7.4 ARCHITECTURE.md Generation — Generate architecture doc from roadmap + inputs.
   - Owner: bri
   - Risk: normal
   - Acceptance Criteria:
     - [ ] Architecture template
     - [ ] Regeneration
-  - Status: backlog
-- [ ] 7.5 Validation & E2E Tests — Extend validators and add end-to-end coverage for bootstrap.
+  - Status: done
+- [x] 7.5 Validation & E2E Tests — Extend validators and add end-to-end coverage for bootstrap.
   - Owner: bri
   - Risk: normal
   - Acceptance Criteria:
     - [ ] ConventionsValidator extensions
     - [ ] E2E for existing/new dirs
-  - Status: backlog
+  - Status: done
 
 Roadmap (machine readable):
 ```json
@@ -238,7 +238,7 @@ Roadmap (machine readable):
           "owner": "bri",
           "parallelizable": false,
           "risk": "normal",
-          "status": "in-progress",
+      "status": "done",
           "summary": "Define roadmap schema and generator with validation.",
           "title": "ROADMAP Spec & Generator"
         },
@@ -252,7 +252,7 @@ Roadmap (machine readable):
           "owner": "bri",
           "parallelizable": false,
           "risk": "normal",
-          "status": "backlog",
+      "status": "done",
           "summary": "Initializer for existing or new directories using roadmap.",
           "title": "Project Initialization CLI"
         },
@@ -265,7 +265,7 @@ Roadmap (machine readable):
           "owner": "bri",
           "parallelizable": false,
           "risk": "normal",
-          "status": "backlog",
+      "status": "done",
           "summary": "Generate backlog cards from roadmap entries.",
           "title": "Task Materialization from ROADMAP"
         },
@@ -278,7 +278,7 @@ Roadmap (machine readable):
           "owner": "bri",
           "parallelizable": false,
           "risk": "normal",
-          "status": "backlog",
+      "status": "done",
           "summary": "Generate architecture doc from roadmap + inputs.",
           "title": "ARCHITECTURE.md Generation"
         },
@@ -291,7 +291,7 @@ Roadmap (machine readable):
           "owner": "bri",
           "parallelizable": false,
           "risk": "normal",
-          "status": "backlog",
+      "status": "done",
           "summary": "Extend validators and add end-to-end coverage for bootstrap.",
           "title": "Validation & E2E Tests"
         }
@@ -305,4 +305,3 @@ Roadmap (machine readable):
 
 History:
 - 2025-11-29: Regenerated roadmap from goal: Deliver agent-driven planning and bootstrap flows.
-
