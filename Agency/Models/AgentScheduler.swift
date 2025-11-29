@@ -1,12 +1,5 @@
 import Foundation
 
-/// Supported agent flows for Codex runs.
-enum AgentFlow: String, CaseIterable, Codable, Equatable, Sendable {
-    case implement
-    case review
-    case research
-}
-
 /// Retry/backoff configuration for failed runs.
 struct AgentRetryPolicy: Equatable, Sendable {
     let baseDelay: Duration
@@ -59,7 +52,7 @@ struct AgentSchedulerConfig: Equatable, Sendable {
         let boundedMax = max(0, maxConcurrent)
         self.maxConcurrent = boundedMax
 
-        let defaultPerFlow = Dictionary(uniqueKeysWithValues: AgentFlow.allCases.map { ($0, 1) })
+        let defaultPerFlow = Dictionary(uniqueKeysWithValues: AgentFlow.schedulable.map { ($0, 1) })
         var merged = defaultPerFlow
         if let perFlow {
             for (flow, value) in perFlow {

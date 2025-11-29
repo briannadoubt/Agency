@@ -1,19 +1,6 @@
 import Foundation
 import Observation
 
-enum AgentFlow: String, CaseIterable, Identifiable {
-    case implement
-    case review
-    case research
-    case plan
-
-    var id: String { rawValue }
-
-    var label: String {
-        rawValue.capitalized
-    }
-}
-
 /// Contract for any backend executor (simulator, Codex XPC, CLI wrapper) to plug into the UI.
 protocol AgentExecutor {
     func run(request: CodexRunRequest,

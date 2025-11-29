@@ -284,7 +284,9 @@ private final class FileSystemChangeStream {
 
         self.stream = stream
 
-        FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+        // macOS 13+: dispatch-queue based scheduling replaces run loop scheduling.
+        FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
+
         FSEventStreamStart(stream)
         return true
     }
