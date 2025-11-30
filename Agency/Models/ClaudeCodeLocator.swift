@@ -130,11 +130,15 @@ struct ProcessRunner: Sendable {
         let exitCode: Int32
     }
 
-    func run(command: String, arguments: [String] = []) async -> Output {
+    func run(command: String, arguments: [String] = [], environment: [String: String]? = nil) async -> Output {
         await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: command)
             process.arguments = arguments
+
+            if let environment {
+                process.environment = environment
+            }
 
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()

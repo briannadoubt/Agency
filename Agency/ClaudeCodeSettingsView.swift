@@ -5,6 +5,20 @@ struct ClaudeCodeSettingsView: View {
     @State private var settings = ClaudeCodeSettings.shared
     @State private var isRefreshing = false
 
+    // API Key state
+    @State private var apiKeyInput = ""
+    @State private var hasStoredKey = false
+    @State private var maskedKey = ""
+    @State private var keyError: String?
+    @State private var keySaveSuccess = false
+    @State private var isTestingConnection = false
+    @State private var connectionTestResult: ConnectionTestResult?
+
+    enum ConnectionTestResult: Equatable {
+        case success
+        case failure(String)
+    }
+
     var body: some View {
         Form {
             Section {
@@ -14,10 +28,18 @@ struct ClaudeCodeSettingsView: View {
             }
 
             Section {
+                apiKeySection
+            } header: {
+                Text("API Key")
+            } footer: {
+                Text("Your API key is stored securely in the macOS Keychain.")
+            }
+
+            Section {
                 pathOverrideField
                 clearOverrideButton
             } header: {
-                Text("Custom Path")
+                Text("Custom CLI Path")
             } footer: {
                 Text("Leave empty to auto-detect. Common locations: /usr/local/bin/claude, ~/.local/bin/claude")
             }
@@ -31,8 +53,11 @@ struct ClaudeCodeSettingsView: View {
         .formStyle(.grouped)
         .task {
             await settings.refreshStatus()
+            refreshKeyStatus()
         }
     }
+
+    // MARK: - CLI Status
 
     @ViewBuilder
     private var statusRow: some View {
@@ -95,6 +120,132 @@ struct ClaudeCodeSettingsView: View {
         }
     }
 
+    // MARK: - API Key Section
+
+    @ViewBuilder
+    private var apiKeySection: some View {
+        if hasStoredKey {
+            storedKeyRow
+        } else {
+            newKeyInputRow
+        }
+
+        if let error = keyError {
+            Text(error)
+                .font(.caption)
+                .foregroundStyle(.red)
+        }
+
+        if keySaveSuccess {
+            Text("API key saved successfully.")
+                .font(.caption)
+                .foregroundStyle(.green)
+        }
+
+        if let result = connectionTestResult {
+            connectionTestResultRow(result)
+        }
+
+        testConnectionButton
+    }
+
+    @ViewBuilder
+    private var storedKeyRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("API Key")
+                    .font(.subheadline)
+                Text(maskedKey)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospaced()
+            }
+            Spacer()
+            Button("Remove") {
+                removeKey()
+            }
+            .buttonStyle(.bordered)
+            .tint(.red)
+        }
+    }
+
+    @ViewBuilder
+    private var newKeyInputRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SecureField("Enter API Key (sk-ant-...)", text: $apiKeyInput)
+                .textFieldStyle(.roundedBorder)
+                .onChange(of: apiKeyInput) { _, _ in
+                    keyError = nil
+                    keySaveSuccess = false
+                    connectionTestResult = nil
+                }
+
+            HStack {
+                Button("Save Key") {
+                    saveKey()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(apiKeyInput.isEmpty)
+
+                if !ClaudeKeyManager.validateFormat(apiKeyInput) && !apiKeyInput.isEmpty {
+                    Text("Key should start with 'sk-ant-'")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var testConnectionButton: some View {
+        HStack {
+            Button {
+                testConnection()
+            } label: {
+                if isTestingConnection {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Text("Test Connection")
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(!hasStoredKey || !settings.status.isAvailable || isTestingConnection)
+
+            if !hasStoredKey {
+                Text("Save an API key first")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if !settings.status.isAvailable {
+                Text("CLI not available")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func connectionTestResultRow(_ result: ConnectionTestResult) -> some View {
+        HStack {
+            switch result {
+            case .success:
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text("Connection successful")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            case .failure(let message):
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.red)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    // MARK: - Path Override
+
     @ViewBuilder
     private var pathOverrideField: some View {
         HStack {
@@ -120,6 +271,8 @@ struct ClaudeCodeSettingsView: View {
             .foregroundStyle(.secondary)
         }
     }
+
+    // MARK: - Installation Instructions
 
     @ViewBuilder
     private var installInstructionsRow: some View {
@@ -155,6 +308,8 @@ struct ClaudeCodeSettingsView: View {
         }
     }
 
+    // MARK: - Actions
+
     private func selectFilePath() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
@@ -167,9 +322,86 @@ struct ClaudeCodeSettingsView: View {
             settings.cliPathOverride = url.path
         }
     }
+
+    private func refreshKeyStatus() {
+        hasStoredKey = ClaudeKeyManager.exists()
+        if hasStoredKey, let key = try? ClaudeKeyManager.retrieve() {
+            maskedKey = ClaudeKeyManager.masked(key)
+        } else {
+            maskedKey = ""
+        }
+    }
+
+    private func saveKey() {
+        keyError = nil
+        keySaveSuccess = false
+        connectionTestResult = nil
+
+        do {
+            try ClaudeKeyManager.save(key: apiKeyInput)
+            keySaveSuccess = true
+            apiKeyInput = ""
+            refreshKeyStatus()
+        } catch let error as ClaudeKeyManager.KeyError {
+            keyError = error.localizedDescription
+        } catch {
+            keyError = error.localizedDescription
+        }
+    }
+
+    private func removeKey() {
+        keyError = nil
+        keySaveSuccess = false
+        connectionTestResult = nil
+
+        do {
+            try ClaudeKeyManager.delete()
+            refreshKeyStatus()
+        } catch {
+            keyError = error.localizedDescription
+        }
+    }
+
+    private func testConnection() {
+        guard let cliPath = settings.status.path else { return }
+
+        isTestingConnection = true
+        connectionTestResult = nil
+
+        Task {
+            let result = await performConnectionTest(cliPath: cliPath)
+            await MainActor.run {
+                connectionTestResult = result
+                isTestingConnection = false
+            }
+        }
+    }
+
+    private func performConnectionTest(cliPath: String) async -> ConnectionTestResult {
+        guard let environment = ClaudeKeyManager.environmentWithKey() else {
+            return .failure("No API key available")
+        }
+
+        let runner = ProcessRunner()
+        let output = await runner.run(
+            command: cliPath,
+            arguments: ["-p", "Say 'Connection successful' and nothing else", "--max-turns", "1"],
+            environment: environment
+        )
+
+        if output.exitCode == 0 {
+            return .success
+        } else {
+            let errorMessage = output.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            if errorMessage.isEmpty {
+                return .failure("CLI exited with code \(output.exitCode)")
+            }
+            return .failure(errorMessage.prefix(100).description)
+        }
+    }
 }
 
 #Preview {
     ClaudeCodeSettingsView()
-        .frame(width: 500, height: 400)
+        .frame(width: 500, height: 600)
 }
