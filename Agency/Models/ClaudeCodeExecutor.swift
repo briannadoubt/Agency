@@ -4,11 +4,14 @@ import Foundation
 struct ClaudeCodeExecutor: AgentExecutor {
     private let locator: ClaudeCodeLocator
     private let fileManager: FileManager
+    private let streamParser: ClaudeStreamParser
 
     init(locator: ClaudeCodeLocator = ClaudeCodeLocator(),
-         fileManager: FileManager = .default) {
+         fileManager: FileManager = .default,
+         streamParser: ClaudeStreamParser = ClaudeStreamParser()) {
         self.locator = locator
         self.fileManager = fileManager
+        self.streamParser = streamParser
     }
 
     func run(request: CodexRunRequest,
@@ -174,7 +177,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
         process.executableURL = URL(fileURLWithPath: cliPath)
         process.arguments = [
             "-p", prompt,
-            "--output-format", "text",
+            "--output-format", "stream-json",
             "--allowedTools", "Bash,Read,Write,Edit,Glob,Grep",
             "--max-turns", "50"
         ]
@@ -189,17 +192,49 @@ struct ClaudeCodeExecutor: AgentExecutor {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
-        // Stream stdout as log events
-        let streamTask = Task {
+        // Stream stdout as log events, parsing JSON lines
+        let streamTask = Task { [streamParser] in
             let handle = stdoutPipe.fileHandleForReading
+            var lineBuffer = Data()
+            var messageCount = 0
+
             while true {
                 let data = handle.availableData
                 if data.isEmpty { break }
-                if let line = String(data: data, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                   !line.isEmpty {
-                    await emit(.log(line))
-                    try? record(event: "log", extra: ["message": String(line.prefix(500))], logURL: logURL)
+
+                // Process data byte by byte to find complete lines
+                for byte in data {
+                    if byte == 0x0A { // newline
+                        if let line = String(data: lineBuffer, encoding: .utf8)?
+                            .trimmingCharacters(in: .whitespacesAndNewlines),
+                           !line.isEmpty {
+                            // Parse as JSON and emit structured event
+                            if let message = streamParser.parse(line: line) {
+                                messageCount += 1
+                                if let logEvent = streamParser.toLogEvent(message) {
+                                    await emit(logEvent)
+                                }
+                                // Emit progress updates based on message count
+                                let progress = min(0.1 + Double(messageCount) * 0.05, 0.9)
+                                await emit(.progress(progress, message: nil))
+                            }
+                            try? record(event: "log", extra: ["message": String(line.prefix(500))], logURL: logURL)
+                        }
+                        lineBuffer.removeAll(keepingCapacity: true)
+                    } else {
+                        lineBuffer.append(byte)
+                    }
+                }
+            }
+
+            // Process any remaining data in buffer
+            if !lineBuffer.isEmpty,
+               let line = String(data: lineBuffer, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !line.isEmpty {
+                if let message = streamParser.parse(line: line),
+                   let logEvent = streamParser.toLogEvent(message) {
+                    await emit(logEvent)
                 }
             }
         }
