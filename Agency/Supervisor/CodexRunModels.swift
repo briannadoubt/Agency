@@ -142,4 +142,19 @@ extension CodexRunRequest {
                         allowNetwork: allowNetwork,
                         cliArgs: cliArgs)
     }
+
+    /// Resolves the project root URL from the security-scoped bookmark.
+    /// Returns nil if the bookmark cannot be resolved.
+    var resolvedProjectRoot: URL? {
+        var isStale = false
+        guard let url = try? URL(resolvingBookmarkData: projectBookmark,
+                                  options: [.withSecurityScope],
+                                  relativeTo: nil,
+                                  bookmarkDataIsStale: &isStale) else {
+            return nil
+        }
+        // Start accessing security-scoped resource
+        _ = url.startAccessingSecurityScopedResource()
+        return url
+    }
 }

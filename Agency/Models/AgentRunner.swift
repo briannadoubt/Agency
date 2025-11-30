@@ -37,6 +37,7 @@ enum AgentBackendKind: String, CaseIterable, Identifiable {
     case simulated   // in-app stub used for previews/tests
     case codex       // XPC-based Codex workers
     case cli         // arbitrary CLI adapter (Cursor, Copilot, Claude wrappers, etc.)
+    case claudeCode  // Claude Code CLI via XPC worker
 
     var id: String { rawValue }
 }
@@ -108,6 +109,7 @@ final class AgentRunner {
         registry[.simulated] = registry[.simulated] ?? SimulatedAgentExecutor()
         registry[.codex] = registry[.codex] ?? CodexAgentExecutor()
         registry[.cli] = registry[.cli] ?? CLIPhaseExecutor()
+        registry[.claudeCode] = registry[.claudeCode] ?? ClaudeCodeExecutor()
         self.executors = registry
     }
 
