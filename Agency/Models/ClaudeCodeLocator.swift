@@ -130,7 +130,13 @@ struct ProcessRunner: Sendable {
         let exitCode: Int32
     }
 
-    func run(command: String, arguments: [String] = [], environment: [String: String]? = nil) async -> Output {
+    /// Default timeout for process execution (10 seconds).
+    static let defaultTimeout: TimeInterval = 10
+
+    func run(command: String,
+             arguments: [String] = [],
+             environment: [String: String]? = nil,
+             timeout: TimeInterval = defaultTimeout) async -> Output {
         await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: command)
@@ -152,11 +158,20 @@ struct ProcessRunner: Sendable {
             do {
                 try process.run()
 
+                // Set up a timeout timer to terminate the process if it hangs
+                let timeoutWorkItem = DispatchWorkItem {
+                    if process.isRunning {
+                        process.terminate()
+                    }
+                }
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timeoutWorkItem)
+
                 // Read output asynchronously to prevent buffer deadlock
                 stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
                 stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
 
                 process.waitUntilExit()
+                timeoutWorkItem.cancel()
 
                 let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
                 let stderr = String(data: stderrData, encoding: .utf8) ?? ""

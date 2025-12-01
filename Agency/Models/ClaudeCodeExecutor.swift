@@ -280,9 +280,9 @@ struct ClaudeCodeExecutor: AgentExecutor {
             fileManager.createFile(atPath: url.path, contents: nil)
         }
         let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
         try handle.seekToEnd()
         handle.write(data)
         handle.write(Data([0x0a]))
-        try handle.close()
     }
 }
