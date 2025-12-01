@@ -5,6 +5,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
     private let locator: ClaudeCodeLocator
     private let fileManager: FileManager
     private let streamParser: ClaudeStreamParser
+    private let dateFormatter: ISO8601DateFormatter
 
     init(locator: ClaudeCodeLocator = ClaudeCodeLocator(),
          fileManager: FileManager = .default,
@@ -12,6 +13,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
         self.locator = locator
         self.fileManager = fileManager
         self.streamParser = streamParser
+        self.dateFormatter = ISO8601DateFormatter()
     }
 
     func run(request: CodexRunRequest,
@@ -266,7 +268,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
     }
 
     private func record(event: String, extra: [String: String], logURL: URL) throws {
-        let entry = ["timestamp": ISO8601DateFormatter().string(from: .now),
+        let entry = ["timestamp": dateFormatter.string(from: .now),
                      "event": event]
             .merging(extra) { $1 }
         let data = try JSONSerialization.data(withJSONObject: entry)

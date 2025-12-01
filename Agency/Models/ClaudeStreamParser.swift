@@ -56,6 +56,7 @@ enum ClaudeResultStatus: String, Equatable {
 
 /// Parses Claude Code's stream-json output format into structured messages.
 struct ClaudeStreamParser {
+    private let dateFormatter = ISO8601DateFormatter()
 
     /// Parses a single line of stream-json output.
     /// - Parameter line: A single JSON line from Claude's stream output.
@@ -118,7 +119,7 @@ struct ClaudeStreamParser {
         let sessionID = json["session_id"] as? String ?? ""
         var timestamp: Date?
         if let timestampString = json["timestamp"] as? String {
-            timestamp = ISO8601DateFormatter().date(from: timestampString)
+            timestamp = dateFormatter.date(from: timestampString)
         }
         return .initSession(sessionID: sessionID, timestamp: timestamp)
     }
