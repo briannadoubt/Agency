@@ -404,7 +404,9 @@ private struct PhaseDetail: View {
     let onCreateCard: (String, Bool) async -> Result<Card, CardCreationError>
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(AgentRunner.self) private var agentRunner
     @State private var draggingCardPath: String?
+    @State private var runError: String?
     @State private var moveError: CardMoveError?
     @State private var editError: String?
     @State private var creationError: String?
@@ -489,6 +491,7 @@ private struct PhaseDetail: View {
                         onMove: handleMove,
                         onSelect: handleSelect,
                         onToggleCriterion: handleToggleCriterion,
+                        onRunWithClaudeCode: handleRunWithClaudeCode,
                         reduceMotion: reduceMotion)
                 .frame(minHeight: DesignTokens.Layout.boardMinimumHeight)
 
@@ -520,6 +523,15 @@ private struct PhaseDetail: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(creationError ?? "Unknown error.")
+                .foregroundStyle(DesignTokens.Colors.textPrimary)
+        }
+        .alert("Run failed", isPresented: Binding(get: { runError != nil },
+                                                  set: { newValue in
+                                                      if !newValue { runError = nil }
+                                                  })) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(runError ?? "Unknown error.")
                 .foregroundStyle(DesignTokens.Colors.textPrimary)
         }
         .sheet(isPresented: $isShowingDetailModal) {
@@ -620,6 +632,17 @@ private struct PhaseDetail: View {
         ownerFilter = .any
     }
 
+    private func handleRunWithClaudeCode(_ card: Card) {
+        Task {
+            let result = await agentRunner.startRun(card: card, flow: .implement, backend: .claudeCode)
+            await MainActor.run {
+                if case .failure(let error) = result {
+                    runError = error.localizedDescription
+                }
+            }
+        }
+    }
+
     private func createCard() {
         let trimmedTitle = newCardTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else {
@@ -656,6 +679,7 @@ private struct KanbanBoard: View {
     let onMove: (String, CardStatus) -> Void
     let onSelect: (Card) -> Void
     let onToggleCriterion: (Card, Int) -> Void
+    let onRunWithClaudeCode: (Card) -> Void
     let reduceMotion: Bool
 
     @FocusState private var focusedCardPath: String?
@@ -674,6 +698,7 @@ private struct KanbanBoard: View {
                                  onMove: onMove,
                                  onSelect: onSelect,
                                  onToggleCriterion: onToggleCriterion,
+                                 onRunWithClaudeCode: onRunWithClaudeCode,
                                  focusedCardPath: $focusedCardPath,
                                  reduceMotion: reduceMotion)
                         .frame(width: DesignTokens.Layout.boardColumnWidth)
@@ -701,6 +726,7 @@ private struct KanbanColumn: View {
     let onMove: (String, CardStatus) -> Void
     let onSelect: (Card) -> Void
     let onToggleCriterion: (Card, Int) -> Void
+    let onRunWithClaudeCode: (Card) -> Void
     let focusedCardPath: FocusState<String?>.Binding
     let reduceMotion: Bool
 
@@ -744,6 +770,13 @@ private struct KanbanColumn: View {
                                          onToggleCriterion: onToggleCriterion)
                             }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                Button {
+                                    onRunWithClaudeCode(card)
+                                } label: {
+                                    Label("Run with Claude Code", systemImage: "bolt.fill")
+                                }
+                            }
                             .focused(focusedCardPath, equals: cardPath)
                             .focusable(true)
                             .draggable(CardDragItem(path: card.filePath.standardizedFileURL.path)) {
