@@ -145,6 +145,9 @@ extension CodexRunRequest {
 
     /// Resolves the project root URL from the security-scoped bookmark.
     /// Returns nil if the bookmark cannot be resolved.
+    ///
+    /// - Important: The caller is responsible for calling `stopAccessingSecurityScopedResource()`
+    ///   on the returned URL when done. Use a `defer` block to ensure cleanup.
     var resolvedProjectRoot: URL? {
         var isStale = false
         guard let url = try? URL(resolvingBookmarkData: projectBookmark,
