@@ -276,10 +276,10 @@ extension CodexAgentExecutorTests {
         }
 
         let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
         try handle.seekToEnd()
         handle.write(data)
         handle.write(Data([0x0a]))
-        try handle.close()
     }
 
 }
