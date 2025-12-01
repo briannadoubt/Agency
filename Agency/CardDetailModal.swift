@@ -57,6 +57,7 @@ struct CardDetailModal: View {
     @State private var appendHistory = false
     @State private var skipRawRefreshOnce = false
     @State private var selectedFlow: AgentFlow = .implement
+    @State private var selectedBackend: AgentBackendKind = .codex
     @State private var agentError: String?
     @State private var externalChangePending = false
     @State private var chatFilter: AgentChatMessage.Role?
@@ -254,6 +255,7 @@ struct CardDetailModal: View {
     private var agentControls: some View {
         AgentControlPanel(card: currentCard,
                           selectedFlow: $selectedFlow,
+                          selectedBackend: $selectedBackend,
                           agentError: $agentError,
                           onRun: { flow in
                               await handleRun(flow: flow)
@@ -476,8 +478,7 @@ struct CardDetailModal: View {
     }
 
     private func handleRun(flow: AgentFlow) async {
-        let backend: AgentBackendKind = (flow == .plan) ? .cli : .codex
-        let result = await agentRunner.startRun(card: currentCard, flow: flow, backend: backend)
+        let result = await agentRunner.startRun(card: currentCard, flow: flow, backend: selectedBackend)
         await MainActor.run {
             switch result {
             case .success:
@@ -992,6 +993,7 @@ private struct AgentChatMessage: Identifiable {
 private struct AgentControlPanel: View {
     let card: Card
     @Binding var selectedFlow: AgentFlow
+    @Binding var selectedBackend: AgentBackendKind
     @Binding var agentError: String?
     let onRun: (AgentFlow) async -> Void
     let onCancel: (UUID) -> Void
@@ -999,6 +1001,22 @@ private struct AgentControlPanel: View {
 
     @Environment(AgentRunner.self) private var agentRunner
     @Environment(\.colorScheme) private var colorScheme
+
+    private var claudeCodeSettings: ClaudeCodeSettings { ClaudeCodeSettings.shared }
+
+    private var isClaudeCodeAvailable: Bool {
+        claudeCodeSettings.status.isAvailable && ClaudeKeyManager.exists()
+    }
+
+    private var claudeCodeUnavailableReason: String? {
+        if !claudeCodeSettings.status.isAvailable {
+            return "CLI not found"
+        }
+        if !ClaudeKeyManager.exists() {
+            return "API key not set"
+        }
+        return nil
+    }
 
     private var runState: AgentRunState? {
         agentRunner.state(for: card)
@@ -1049,6 +1067,8 @@ private struct AgentControlPanel: View {
                 }
             }
             .pickerStyle(.segmented)
+
+            backendPicker
 
             HStack(spacing: DesignTokens.Spacing.small) {
                 if let runState, isActive {
@@ -1130,6 +1150,36 @@ private struct AgentControlPanel: View {
         }
         .padding()
         .surfaceStyle(DesignTokens.Surfaces.mutedPanel)
+    }
+
+    @ViewBuilder
+    private var backendPicker: some View {
+        HStack(spacing: DesignTokens.Spacing.small) {
+            Text("Backend")
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+
+            Picker("Backend", selection: $selectedBackend) {
+                Text("Codex").tag(AgentBackendKind.codex)
+                Text("CLI").tag(AgentBackendKind.cli)
+                HStack {
+                    Text("Claude Code")
+                    if !isClaudeCodeAvailable {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .tag(AgentBackendKind.claudeCode)
+            }
+            .pickerStyle(.menu)
+            .disabled(isActive)
+
+            if selectedBackend == .claudeCode, let reason = claudeCodeUnavailableReason {
+                Text(reason)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
     }
 
     private func resultDetailText(_ result: WorkerRunResult) -> String {
