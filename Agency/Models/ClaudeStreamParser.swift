@@ -236,32 +236,14 @@ extension ClaudeStreamParser {
         case .system(let message):
             return .log(message)
 
-        case .result(let status, let durationMs, let costUSD):
-            let workerStatus: WorkerRunResult.Status
-            switch status {
-            case .success:
-                workerStatus = .succeeded
-            case .cancelled:
-                workerStatus = .canceled
-            case .failure, .timeout, .unknown:
-                workerStatus = .failed
-            }
-
-            let duration = (durationMs ?? 0) / 1000.0
+        case .result(let status, _, let costUSD):
+            // Don't emit .finished here - let the executor handle that
+            // Just log the result summary
             var summary = "Claude Code \(status.rawValue)"
             if let cost = costUSD {
                 summary += String(format: " ($%.4f)", cost)
             }
-
-            let result = WorkerRunResult(
-                status: workerStatus,
-                exitCode: status == .success ? 0 : 1,
-                duration: duration,
-                bytesRead: 0,
-                bytesWritten: 0,
-                summary: summary
-            )
-            return .finished(result)
+            return .log(summary)
 
         case .unknown:
             return nil

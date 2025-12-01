@@ -117,8 +117,9 @@ struct ClaudeCodeExecutor: AgentExecutor {
     }
 
     private func resolveCLIPath() async throws -> String {
-        let settings = await MainActor.run { ClaudeCodeSettings.shared }
-        let override = await MainActor.run { settings.cliPathOverride }
+        let override = await MainActor.run {
+            ClaudeCodeSettings.shared.cliPathOverride
+        }
 
         let result = await locator.locate(userOverridePath: override.isEmpty ? nil : override)
 
@@ -198,7 +199,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
             var lineBuffer = Data()
             var messageCount = 0
 
-            while true {
+            while !Task.isCancelled {
                 let data = handle.availableData
                 if data.isEmpty { break }
 
@@ -248,7 +249,8 @@ struct ClaudeCodeExecutor: AgentExecutor {
             process.terminate()
         }
 
-        streamTask.cancel()
+        // Wait for stream task to complete processing
+        await streamTask.value
 
         let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
         let stderr = String(data: stderrData, encoding: .utf8) ?? ""

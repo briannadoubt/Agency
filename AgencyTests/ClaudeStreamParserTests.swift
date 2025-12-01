@@ -383,47 +383,43 @@ struct ClaudeStreamParserTests {
     }
 
     @MainActor
-    @Test func mapsSuccessResultToFinished() {
+    @Test func mapsSuccessResultToLog() {
         let message = ClaudeStreamMessage.result(status: .success, durationMs: 2000, costUSD: 0.01)
         let event = parser.toLogEvent(message)
 
-        guard case .finished(let result) = event else {
-            Issue.record("Expected finished event")
+        guard case .log(let text) = event else {
+            Issue.record("Expected log event")
             return
         }
 
-        #expect(result.status == .succeeded)
-        #expect(result.exitCode == 0)
-        #expect(result.duration == 2.0)
-        #expect(result.summary.contains("success"))
-        #expect(result.summary.contains("$0.01"))
+        #expect(text.contains("success"))
+        #expect(text.contains("$0.01"))
     }
 
     @MainActor
-    @Test func mapsFailureResultToFinished() {
+    @Test func mapsFailureResultToLog() {
         let message = ClaudeStreamMessage.result(status: .failure, durationMs: 500, costUSD: nil)
         let event = parser.toLogEvent(message)
 
-        guard case .finished(let result) = event else {
-            Issue.record("Expected finished event")
+        guard case .log(let text) = event else {
+            Issue.record("Expected log event")
             return
         }
 
-        #expect(result.status == .failed)
-        #expect(result.exitCode == 1)
+        #expect(text.contains("failure"))
     }
 
     @MainActor
-    @Test func mapsCancelledResultToFinished() {
+    @Test func mapsCancelledResultToLog() {
         let message = ClaudeStreamMessage.result(status: .cancelled, durationMs: nil, costUSD: nil)
         let event = parser.toLogEvent(message)
 
-        guard case .finished(let result) = event else {
-            Issue.record("Expected finished event")
+        guard case .log(let text) = event else {
+            Issue.record("Expected log event")
             return
         }
 
-        #expect(result.status == .canceled)
+        #expect(text.contains("cancelled"))
     }
 
     @MainActor

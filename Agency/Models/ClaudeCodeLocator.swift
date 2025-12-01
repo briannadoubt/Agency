@@ -145,12 +145,18 @@ struct ProcessRunner: Sendable {
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
 
+            // Read data before waiting to prevent deadlock if buffer fills
+            var stdoutData = Data()
+            var stderrData = Data()
+
             do {
                 try process.run()
-                process.waitUntilExit()
 
-                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                // Read output asynchronously to prevent buffer deadlock
+                stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+
+                process.waitUntilExit()
 
                 let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
                 let stderr = String(data: stderrData, encoding: .utf8) ?? ""
