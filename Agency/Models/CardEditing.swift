@@ -55,12 +55,16 @@ struct CardDetailFormDraft: Equatable {
         newHistoryEntry = CardDetailFormDraft.defaultHistoryPrefix(on: date)
     }
 
-    static func defaultHistoryPrefix(on date: Date) -> String {
+    private static let historyDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .iso8601)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date) + " - "
+        return formatter
+    }()
+
+    static func defaultHistoryPrefix(on date: Date) -> String {
+        historyDateFormatter.string(from: date) + " - "
     }
 
     static func normalizedHistoryEntry(_ entry: String) -> String? {
