@@ -1041,8 +1041,11 @@ private struct AgentControlPanel: View {
         if let runState {
             return runState.phase.rawValue.capitalized
         }
-        let status = card.frontmatter.agentStatus?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return status?.isEmpty == false ? status!.capitalized : "Idle"
+        if let status = card.frontmatter.agentStatus?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !status.isEmpty {
+            return status.capitalized
+        }
+        return "Idle"
     }
 
     private var isActive: Bool {
