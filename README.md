@@ -40,6 +40,27 @@ The Siri entitlement is included. On first launch, Shortcuts should recognize Ag
 ### Spotlight Search
 Cards are indexed in Spotlight when viewed. Search by card code (e.g., "1.3") or title keywords to find cards quickly.
 
+## Claude Code Integration
+
+Agency can run agent tasks using the Claude Code CLI for AI-powered card implementation.
+
+### Prerequisites
+1. **Install Claude Code CLI:**
+   ```bash
+   npm install -g @anthropic-ai/claude-code
+   ```
+
+2. **Configure in Agency:**
+   - Open Agency Settings
+   - The CLI will be auto-detected, or specify a custom path
+   - Add your Anthropic API key (stored securely in macOS Keychain)
+
+### Usage
+- **From Card Detail:** Select "Claude Code" from the backend picker, then click Run
+- **Quick Action:** Right-click any card on the board and select "Run with Claude Code"
+
+The agent reads the card's acceptance criteria, implements the changes, runs tests, and updates the card. Cost and duration are displayed after completion.
+
 ## Running tests
 ```
 xcodebuild -scheme Agency -destination 'platform=macOS' test
