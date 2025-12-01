@@ -70,3 +70,27 @@ Always check the name of the branch and find the corresponding task file and mak
 - `CardEntity` is the AppEntity for cards; `CardStatusAppEnum` for status filtering.
 - Entitlements: `com.apple.developer.siri` enabled in `Agency.entitlements`.
 - Available intents: ListCardsIntent, ProjectStatusIntent, MoveCardIntent, CreateCardIntent, OpenCardIntent.
+
+## Claude Code CLI Integration
+Agency integrates with the Claude Code CLI (`claude`) to run AI-powered agent tasks directly from the card detail view.
+
+### Components
+- **ClaudeCodeLocator**: Discovers the `claude` CLI binary via user override, PATH, or common install locations (`/usr/local/bin/claude`, `/opt/homebrew/bin/claude`, `~/.local/bin/claude`).
+- **ClaudeKeyManager**: Stores the Anthropic API key in macOS Keychain under service `com.briannadoubt.Agency.anthropic-api-key`.
+- **ClaudeCodeSettings**: Observable settings for CLI path override and availability status.
+- **ClaudeCodeExecutor**: Implements `AgentExecutor` protocol, spawns the CLI with `--output-format stream-json`.
+- **ClaudeStreamParser**: Parses newline-delimited JSON stream into `ClaudeStreamMessage` types and maps to `WorkerLogEvent`.
+
+### Configuration
+1. Install Claude Code CLI: `npm install -g @anthropic-ai/claude-code`
+2. In Agency Settings, the CLI will be auto-detected or you can specify a custom path.
+3. Add your Anthropic API key in Settings. The key is stored securely in Keychain.
+
+### Usage
+- Select "Claude Code" from the backend picker in the card detail view.
+- Right-click any card on the Kanban board and select "Run with Claude Code" for quick execution.
+- Real-time streaming output appears in the agent panel.
+- Cost is displayed in the result summary after completion.
+
+### CLI Arguments
+The executor runs: `claude -p <prompt> --output-format stream-json --allowedTools Bash,Read,Write,Edit,Glob,Grep --max-turns 50`
