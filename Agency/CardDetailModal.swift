@@ -370,7 +370,7 @@ struct CardDetailModal: View {
     }
 
     private func syncDraftsForModeChange(from old: CardDetailMode, to new: CardDetailMode) {
-        guard snapshot != nil else { return }
+        guard let currentSnapshot = snapshot else { return }
 
         if old != .raw && new == .raw {
             if skipRawRefreshOnce {
@@ -378,8 +378,7 @@ struct CardDetailModal: View {
                 return
             }
 
-            let baseline = pendingRawSnapshot ?? snapshot
-            guard let baseline else { return }
+            let baseline = pendingRawSnapshot ?? currentSnapshot
 
             rawDraft = CardMarkdownWriter().renderMarkdown(from: formDraft,
                                                            basedOn: baseline.card,
@@ -390,14 +389,14 @@ struct CardDetailModal: View {
         if old == .raw && (new == .form || new == .view) {
             do {
                 let priorHistoryEntry = formDraft.newHistoryEntry
-                let parsedCard = try CardMarkdownWriter().formDraft(fromRaw: rawDraft, fileURL: snapshot!.card.filePath)
+                let parsedCard = try CardMarkdownWriter().formDraft(fromRaw: rawDraft, fileURL: currentSnapshot.card.filePath)
                 // Preserve transient fields not represented in markdown.
                 formDraft = parsedCard
                 formDraft.newHistoryEntry = priorHistoryEntry
-                let parsed = try CardFileParser().parse(fileURL: snapshot!.card.filePath, contents: rawDraft)
+                let parsed = try CardFileParser().parse(fileURL: currentSnapshot.card.filePath, contents: rawDraft)
                 pendingRawSnapshot = CardDocumentSnapshot(card: parsed,
                                                           contents: rawDraft,
-                                                          modifiedAt: snapshot!.modifiedAt)
+                                                          modifiedAt: currentSnapshot.modifiedAt)
             } catch {
                 errorMessage = error.localizedDescription
                 mode = .raw
