@@ -227,6 +227,13 @@ final class AgentScheduler {
         self.eventContinuation = continuation
     }
 
+    deinit {
+        for task in backoffTasks.values {
+            task.cancel()
+        }
+        eventContinuation.finish()
+    }
+
     // MARK: Public API
 
     func enqueue(cardPath: String,
