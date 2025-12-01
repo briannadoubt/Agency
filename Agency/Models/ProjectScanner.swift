@@ -175,6 +175,12 @@ private final class ProjectScanScheduler {
         self.continuation = continuation
     }
 
+    @MainActor deinit {
+        debouncedTask?.cancel()
+        pollTask?.cancel()
+        changeStream?.stop()
+    }
+
     func start() {
         scheduleImmediateScan()
         attachChangeStream()
