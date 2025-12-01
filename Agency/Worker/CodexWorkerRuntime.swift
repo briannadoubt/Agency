@@ -10,6 +10,7 @@ struct CodexWorkerRuntime {
     let outputDirectory: URL
     let allowNetwork: Bool
     private let accessValidator: FileAccessValidator
+    private let dateFormatter = ISO8601DateFormatter()
 
     private let logger = Logger(subsystem: "dev.agency.worker", category: "runtime")
 
@@ -97,7 +98,7 @@ struct CodexWorkerRuntime {
 
     private func record(event: String, extra: [String: String]) throws {
         let logURL = logDirectory.appendingPathComponent("worker.log")
-        let entry = ["timestamp": ISO8601DateFormatter().string(from: .now),
+        let entry = ["timestamp": dateFormatter.string(from: .now),
                      "event": event]
             .merging(extra) { $1 }
         let line = (try? JSONSerialization.data(withJSONObject: entry)) ?? Data()
@@ -106,17 +107,14 @@ struct CodexWorkerRuntime {
     }
 
     private func appendLine(_ data: Data, to url: URL) throws {
-        let handle: FileHandle
-        if FileManager.default.fileExists(atPath: url.path) {
-            handle = try FileHandle(forWritingTo: url)
-            try handle.seekToEnd()
-        } else {
+        if !FileManager.default.fileExists(atPath: url.path) {
             FileManager.default.createFile(atPath: url.path, contents: nil)
-            handle = try FileHandle(forWritingTo: url)
         }
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
         handle.write(data)
         handle.write(Data([0x0a]))
-        try handle.close()
     }
 }
 

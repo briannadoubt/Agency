@@ -4,11 +4,13 @@ import Foundation
 struct CLIPhaseExecutor: AgentExecutor {
     private let fileManager: FileManager
     private let command: PhaseScaffoldingCommand
+    private let dateFormatter: ISO8601DateFormatter
 
     init(fileManager: FileManager = .default,
          command: PhaseScaffoldingCommand = PhaseScaffoldingCommand()) {
         self.fileManager = fileManager
         self.command = command
+        self.dateFormatter = ISO8601DateFormatter()
     }
 
     func run(request: CodexRunRequest,
@@ -113,7 +115,7 @@ struct CLIPhaseExecutor: AgentExecutor {
     }
 
     private func record(event: String, extra: [String: String], logURL: URL) throws {
-        let entry = ["timestamp": ISO8601DateFormatter().string(from: .now),
+        let entry = ["timestamp": dateFormatter.string(from: .now),
                      "event": event]
             .merging(extra) { $1 }
         let data = try JSONSerialization.data(withJSONObject: entry)
@@ -125,10 +127,10 @@ struct CLIPhaseExecutor: AgentExecutor {
             fileManager.createFile(atPath: url.path, contents: nil)
         }
         let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
         try handle.seekToEnd()
         handle.write(data)
         handle.write(Data([0x0a]))
-        try handle.close()
     }
 
     private func appendHistoryEntry(runID: UUID, flow: String, planPath: URL) throws {

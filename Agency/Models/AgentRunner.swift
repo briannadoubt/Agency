@@ -537,6 +537,7 @@ private struct SimulatedWorker {
     let logURL: URL
     let outputDirectory: URL
     let emit: (@Sendable (WorkerLogEvent) async -> Void)?
+    private let dateFormatter = ISO8601DateFormatter()
 
     func run() async {
         let start = Date()
@@ -596,7 +597,7 @@ private struct SimulatedWorker {
         try FileManager.default.createDirectory(at: logDirectory,
                                                 withIntermediateDirectories: true,
                                                 attributes: nil)
-        let entry = ["timestamp": ISO8601DateFormatter().string(from: .now),
+        let entry = ["timestamp": dateFormatter.string(from: .now),
                      "event": event]
             .merging(extra) { $1 }
         let data = try JSONSerialization.data(withJSONObject: entry)
@@ -618,10 +619,10 @@ private struct SimulatedWorker {
             FileManager.default.createFile(atPath: url.path, contents: nil)
         }
         let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
         try handle.seekToEnd()
         handle.write(data)
         handle.write(Data([0x0a]))
-        try handle.close()
     }
 }
 
