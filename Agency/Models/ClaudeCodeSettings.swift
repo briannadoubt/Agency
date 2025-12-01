@@ -9,6 +9,7 @@ final class ClaudeCodeSettings {
 
     private let defaults: UserDefaults
     private let locator: ClaudeCodeLocator
+    private var refreshTask: Task<Void, Never>?
 
     private static let cliPathKey = "claudeCodeCLIPath"
 
@@ -16,7 +17,9 @@ final class ClaudeCodeSettings {
     var cliPathOverride: String {
         didSet {
             defaults.set(cliPathOverride, forKey: Self.cliPathKey)
-            Task { await refreshStatus() }
+            // Cancel any pending refresh and start a new one
+            refreshTask?.cancel()
+            refreshTask = Task { await refreshStatus() }
         }
     }
 
@@ -75,6 +78,9 @@ final class ClaudeCodeSettings {
 
         let override = cliPathOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         let result = await locator.locate(userOverridePath: override.isEmpty ? nil : override)
+
+        // Don't update status if this task was cancelled (a newer refresh is running)
+        guard !Task.isCancelled else { return }
 
         switch result {
         case .success(let locatorResult):

@@ -1002,14 +1002,16 @@ private struct AgentControlPanel: View {
     @Environment(AgentRunner.self) private var agentRunner
     @Environment(\.colorScheme) private var colorScheme
 
-    private var claudeCodeSettings: ClaudeCodeSettings { ClaudeCodeSettings.shared }
+    private var claudeCodeStatus: ClaudeCodeSettings.CLIStatus {
+        ClaudeCodeSettings.shared.status
+    }
 
     private var isClaudeCodeAvailable: Bool {
-        claudeCodeSettings.status.isAvailable && ClaudeKeyManager.exists()
+        claudeCodeStatus.isAvailable && ClaudeKeyManager.exists()
     }
 
     private var claudeCodeUnavailableReason: String? {
-        if !claudeCodeSettings.status.isAvailable {
+        if !claudeCodeStatus.isAvailable {
             return "CLI not found"
         }
         if !ClaudeKeyManager.exists() {

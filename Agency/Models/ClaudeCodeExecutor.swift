@@ -20,6 +20,12 @@ struct ClaudeCodeExecutor: AgentExecutor {
              emit: @escaping @Sendable (WorkerLogEvent) async -> Void) async {
         let start = Date()
 
+        // Resolve project root once and track for cleanup
+        let workingDirectory = request.resolvedProjectRoot
+        defer {
+            workingDirectory?.stopAccessingSecurityScopedResource()
+        }
+
         do {
             try prepareLogDirectory(for: logURL)
             try record(event: "workerReady",
@@ -39,7 +45,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
             let result = try await runClaude(
                 cliPath: cliPath,
                 prompt: prompt,
-                workingDirectory: request.resolvedProjectRoot,
+                workingDirectory: workingDirectory,
                 environment: environment,
                 logURL: logURL,
                 emit: emit
