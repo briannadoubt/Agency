@@ -383,10 +383,12 @@ struct ClaudeCodeSettingsView: View {
         }
 
         let runner = ProcessRunner()
+        // Use a longer timeout for connection test (60 seconds) since Claude needs time to respond
         let output = await runner.run(
             command: cliPath,
             arguments: ["-p", "Say 'Connection successful' and nothing else", "--max-turns", "1"],
-            environment: environment
+            environment: environment,
+            timeout: 60
         )
 
         if output.exitCode == 0 {
