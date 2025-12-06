@@ -1,7 +1,14 @@
 import Foundation
 
-enum PhaseParsingError: Error {
+enum PhaseParsingError: LocalizedError {
     case invalidDirectoryName(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidDirectoryName(let name):
+            return "Invalid phase directory name '\(name)'. Expected format: phase-N-label"
+        }
+    }
 }
 
 struct Phase: Equatable {

@@ -6,9 +6,18 @@ struct PhaseSnapshot: Equatable {
     let cards: [Card]
 }
 
-enum ProjectScannerError: Error {
+enum ProjectScannerError: LocalizedError {
     case missingProjectRoot(URL)
     case missingStatusDirectory(phase: Phase, status: CardStatus)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingProjectRoot(let url):
+            return "Project folder not found at '\(url.lastPathComponent)'"
+        case .missingStatusDirectory(let phase, let status):
+            return "Missing '\(status.folderName)' folder in phase '\(phase.label)'"
+        }
+    }
 }
 
 /// Scans the markdown-driven kanban project and produces an in-memory representation.
