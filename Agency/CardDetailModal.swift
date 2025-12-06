@@ -859,10 +859,9 @@ private struct AgentChatTranscript: View {
         // Timestamp + role prefix, e.g., "[02:00] system: ..."
         if let bracketRange = trimmed.range(of: "] "),
            trimmed.first == "[",
-           let _ = trimmed[trimmed.index(after: bracketRange.upperBound)...]
-            .split(separator: ":", maxSplits: 1, omittingEmptySubsequences: true).first {
+           bracketRange.upperBound < trimmed.endIndex {
             let remaining = trimmed[bracketRange.upperBound...]
-            if let parsed = parsePrefixed(String(remaining)) {
+            if remaining.contains(":"), let parsed = parsePrefixed(String(remaining)) {
                 return [parsed]
             }
         }
