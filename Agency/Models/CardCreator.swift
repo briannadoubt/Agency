@@ -56,10 +56,10 @@ actor CardCreator {
         guard !trimmedTitle.isEmpty else { throw CardCreationError.emptyTitle }
 
         let phaseURL = phaseSnapshot.phase.path.standardizedFileURL
-        guard directoryExists(at: phaseURL) else { throw CardCreationError.missingPhaseDirectory }
+        guard fileManager.directoryExists(at: phaseURL) else { throw CardCreationError.missingPhaseDirectory }
 
         let backlogURL = phaseURL.appendingPathComponent(CardStatus.backlog.folderName, isDirectory: true)
-        guard directoryExists(at: backlogURL) else { throw CardCreationError.missingStatusDirectory(.backlog) }
+        guard fileManager.directoryExists(at: backlogURL) else { throw CardCreationError.missingStatusDirectory(.backlog) }
 
         let (nextMinor, width) = nextTaskNumber(from: phaseSnapshot)
         let formattedMinor = String(format: "%0*d", width, nextMinor)
@@ -172,11 +172,7 @@ actor CardCreator {
         ])
 
         if includeHistoryEntry {
-            let formatter = DateFormatter()
-            formatter.calendar = Calendar(identifier: .iso8601)
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.dateFormat = "yyyy-MM-dd"
-            let today = formatter.string(from: dateProvider())
+            let today = DateFormatters.dateString(from: dateProvider())
             lines.append("- \(today): Card created in Agency.")
         }
 
@@ -193,9 +189,4 @@ actor CardCreator {
         }
     }
 
-    private func directoryExists(at url: URL) -> Bool {
-        var isDirectory: ObjCBool = false
-        let exists = fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
-        return exists && isDirectory.boolValue
-    }
 }

@@ -11,7 +11,7 @@ struct WorkerLauncherTests {
                                                                 isDirectory: true)
         let logDirectory = root.appendingPathComponent("logs", isDirectory: true)
 
-        let request = CodexRunRequest(runID: UUID(),
+        let request = WorkerRunRequest(runID: UUID(),
                                       flow: "test",
                                       cardRelativePath: "project/phase/card.md",
                                       projectBookmark: Data([0x01]),
@@ -35,7 +35,7 @@ struct WorkerLauncherTests {
 
         let payloadURL = logDirectory.appendingPathComponent("worker.payload.json")
         let payloadData = try Data(contentsOf: payloadURL)
-        let decoded = try JSONDecoder().decode(CodexRunRequest.self, from: payloadData)
+        let decoded = try JSONDecoder().decode(WorkerRunRequest.self, from: payloadData)
 
         #expect(decoded.runID == request.runID)
         #expect(decoded.outputDirectory.lastPathComponent == "tmp")
@@ -55,7 +55,7 @@ struct WorkerLauncherTests {
                                                                 isDirectory: true)
         let logDirectory = root.appendingPathComponent("logs", isDirectory: true)
 
-        let request = CodexRunRequest(runID: UUID(),
+        let request = WorkerRunRequest(runID: UUID(),
                                       flow: "test",
                                       cardRelativePath: "project/phase/card.md",
                                       projectBookmark: Data([0x02]),

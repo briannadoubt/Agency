@@ -143,9 +143,9 @@ private final class StubAgentExecutor: AgentExecutor {
                                  bytesRead: 0,
                                  bytesWritten: 0,
                                  summary: "ok")
-    var lastRequest: CodexRunRequest?
+    var lastRequest: WorkerRunRequest?
 
-    func run(request: CodexRunRequest,
+    func run(request: WorkerRunRequest,
              logURL: URL,
              outputDirectory: URL,
              emit: @escaping @Sendable (WorkerLogEvent) async -> Void) async {

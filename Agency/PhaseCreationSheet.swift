@@ -23,7 +23,7 @@ struct PhaseCreationSheet: View {
             formFields
 
             if let error = controller.errorMessage {
-                PhaseErrorBanner(message: error) {
+                DismissibleBanner.warning(error) {
                     controller.errorMessage = nil
                 }
             }
@@ -252,39 +252,12 @@ private struct RunLogView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(minHeight: 120, maxHeight: 200)
-            .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.small).fill(DesignTokens.Colors.surface))
-            .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.small).stroke(DesignTokens.Colors.strokeMuted))
+            .surfacePanel(style: .standard, radius: DesignTokens.Radius.small)
         }
     }
 }
 
-private struct PhaseErrorBanner: View {
-    let message: String
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Spacing.small) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.yellow)
-            Text(message)
-                .font(DesignTokens.Typography.body)
-                .foregroundStyle(DesignTokens.Colors.textPrimary)
-            Spacer()
-            Button {
-                onDismiss()
-            } label: {
-                Image(systemName: "xmark")
-            }
-            .buttonStyle(.borderless)
-            .help("Dismiss")
-        }
-        .padding()
-        .background(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium)
-            .fill(DesignTokens.Colors.surfaceRaised))
-        .overlay(RoundedRectangle(cornerRadius: DesignTokens.Radius.medium)
-            .stroke(DesignTokens.Colors.stroke, lineWidth: 1))
-    }
-}
+// Note: PhaseErrorBanner replaced by DismissibleBanner from Components/
 
 #if DEBUG
 struct PhaseCreationSheet_Previews: PreviewProvider {
@@ -322,7 +295,7 @@ struct PhaseCreationSheet_Previews: PreviewProvider {
     }
 
     private final class StubPreviewExecutor: AgentExecutor {
-        func run(request: CodexRunRequest,
+        func run(request: WorkerRunRequest,
                  logURL: URL,
                  outputDirectory: URL,
                  emit: @escaping @Sendable (WorkerLogEvent) async -> Void) async {

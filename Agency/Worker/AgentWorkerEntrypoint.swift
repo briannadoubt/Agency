@@ -1,9 +1,9 @@
 import Foundation
 
 /// Helper the real worker target can call from its `@main` entry to share the runtime logic.
-enum CodexWorkerEntrypoint {
+enum AgentWorkerEntrypoint {
     static func run(arguments: [String] = CommandLine.arguments) async {
-        guard let runtime = CodexWorkerBootstrap.runtimeFromEnvironment(arguments: arguments) else {
+        guard let runtime = AgentWorkerBootstrap.runtimeFromEnvironment(arguments: arguments) else {
             return
         }
         await runtime.run()

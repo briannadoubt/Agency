@@ -212,16 +212,16 @@ private func runID(from result: AgentEnqueueResult, file: StaticString = #filePa
 private final class RecordingLauncher: AgentWorkerLaunching, @unchecked Sendable {
     enum StubError: Error { case failed }
 
-    private let failureRule: @MainActor @Sendable (AgentRunRequest, Int) -> Bool
+    private let failureRule: @MainActor @Sendable (SchedulerRunRequest, Int) -> Bool
     private var launchCount = 0
 
-    init(failureRule: @MainActor @escaping @Sendable (AgentRunRequest, Int) -> Bool = { _, _ in false }) {
+    init(failureRule: @MainActor @escaping @Sendable (SchedulerRunRequest, Int) -> Bool = { _, _ in false }) {
         self.failureRule = failureRule
     }
 
-    private(set) var launched: [AgentRunRequest] = []
+    private(set) var launched: [SchedulerRunRequest] = []
 
-    func launch(run: AgentRunRequest) async throws {
+    func launch(run: SchedulerRunRequest) async throws {
         launchCount += 1
         launched.append(run)
         if failureRule(run, launchCount) {

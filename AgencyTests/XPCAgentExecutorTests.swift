@@ -2,7 +2,7 @@ import XCTest
 @testable import Agency
 
 @MainActor
-final class CodexAgentExecutorTests: XCTestCase {
+final class XPCAgentExecutorTests: XCTestCase {
     private var recordedEvents: [WorkerLogEvent] = []
 
     func testStreamsLogsProgressAndFinish() async throws {
@@ -31,7 +31,7 @@ final class CodexAgentExecutorTests: XCTestCase {
             return .success(WorkerEndpoint(runID: req.runID, bootstrapName: "test.endpoint"))
         }
 
-        let executor = CodexAgentExecutor(client: client)
+        let executor = XPCAgentExecutor(client: client)
         recordedEvents = []
 
         await executor.run(request: request, logURL: logURL, outputDirectory: temp) { event in
@@ -73,7 +73,7 @@ final class CodexAgentExecutorTests: XCTestCase {
             return .success(WorkerEndpoint(runID: request.runID, bootstrapName: "test"))
         }
 
-        let executor = CodexAgentExecutor(client: client)
+        let executor = XPCAgentExecutor(client: client)
         recordedEvents = []
 
         let task = Task {
@@ -105,7 +105,7 @@ final class CodexAgentExecutorTests: XCTestCase {
             .success(WorkerEndpoint(runID: request.runID, bootstrapName: "test"))
         }
 
-        let executor = CodexAgentExecutor(client: client, streamer: streamer)
+        let executor = XPCAgentExecutor(client: client, streamer: streamer)
         recordedEvents = []
 
         await executor.run(request: request, logURL: logURL, outputDirectory: temp) { event in
@@ -131,7 +131,7 @@ final class CodexAgentExecutorTests: XCTestCase {
             .success(WorkerEndpoint(runID: request.runID, bootstrapName: "test"))
         }
 
-        let executor = CodexAgentExecutor(client: client, streamer: streamer)
+        let executor = XPCAgentExecutor(client: client, streamer: streamer)
         recordedEvents = []
 
         await executor.run(request: request, logURL: logURL, outputDirectory: temp) { event in
@@ -167,7 +167,7 @@ final class CodexAgentExecutorTests: XCTestCase {
             .success(WorkerEndpoint(runID: request.runID, bootstrapName: "test"))
         }
 
-        let executor = CodexAgentExecutor(client: client, streamer: streamer)
+        let executor = XPCAgentExecutor(client: client, streamer: streamer)
 
         await executor.run(request: request,
                            logURL: logURL,
@@ -179,8 +179,8 @@ final class CodexAgentExecutorTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func makeRequest(logDirectory: URL) -> CodexRunRequest {
-        CodexRunRequest(runID: UUID(),
+    private func makeRequest(logDirectory: URL) -> WorkerRunRequest {
+        WorkerRunRequest(runID: UUID(),
                         flow: "implement",
                         cardRelativePath: "phase/card.md",
                         projectBookmark: Data(),
@@ -195,14 +195,14 @@ final class CodexAgentExecutorTests: XCTestCase {
 
 @MainActor
 final class StubSupervisorClient: SupervisorClienting {
-    let launchHandler: @MainActor (CodexRunRequest) -> Result<WorkerEndpoint, Error>
+    let launchHandler: @MainActor (WorkerRunRequest) -> Result<WorkerEndpoint, Error>
     private(set) var canceledRunIDs: [UUID] = []
 
-    init(launchHandler: @escaping @MainActor (CodexRunRequest) -> Result<WorkerEndpoint, Error>) {
+    init(launchHandler: @escaping @MainActor (WorkerRunRequest) -> Result<WorkerEndpoint, Error>) {
         self.launchHandler = launchHandler
     }
 
-    func launch(request: CodexRunRequest) async -> Result<WorkerEndpoint, Error> {
+    func launch(request: WorkerRunRequest) async -> Result<WorkerEndpoint, Error> {
         launchHandler(request)
     }
 
@@ -240,7 +240,7 @@ struct StubStreamer: WorkerLogStreaming {
 
 // MARK: - Helpers
 
-extension CodexAgentExecutorTests {
+extension XPCAgentExecutorTests {
     private func appendLog(_ message: String, to url: URL) throws {
         try appendLine(Data(message.utf8), to: url)
     }

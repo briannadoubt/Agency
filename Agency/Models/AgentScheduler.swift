@@ -1,38 +1,6 @@
 import Foundation
 
-/// Retry/backoff configuration for failed runs.
-struct AgentRetryPolicy: Equatable, Sendable {
-    let baseDelay: Duration
-    let multiplier: Double
-    let jitter: Double
-    let maxDelay: Duration
-    let maxAttempts: Int
-
-    static let standard = AgentRetryPolicy(baseDelay: .milliseconds(30_000),
-                                           multiplier: 2,
-                                           jitter: 0.1,
-                                           maxDelay: .milliseconds(300_000),
-                                           maxAttempts: 5)
-
-    func delay(forAttempt attempt: Int,
-               random: @Sendable (ClosedRange<Double>) -> Double = { Double.random(in: $0) }) -> Duration {
-        guard attempt > 0 else { return .zero }
-
-        let baseSeconds = seconds(from: baseDelay)
-        let scaled = baseSeconds * pow(multiplier, Double(attempt - 1))
-        let jitterSpan = scaled * jitter
-        let delta = random(-jitterSpan...jitterSpan)
-        let clampedSeconds = min(scaled + delta, seconds(from: maxDelay))
-
-        let milliseconds = Int((clampedSeconds * 1_000).rounded())
-        return .milliseconds(milliseconds)
-    }
-
-    private func seconds(from duration: Duration) -> Double {
-        let components = duration.components
-        return Double(components.seconds) + Double(components.attoseconds) / 1_000_000_000_000_000_000.0
-    }
-}
+// Note: AgentRetryPolicy is now a typealias for BackoffPolicy in BackoffPolicy.swift
 
 /// Scheduler limits and policy values sourced from configuration.
 struct AgentSchedulerConfig: Equatable, Sendable {
@@ -77,7 +45,7 @@ struct AgentSchedulerConfig: Equatable, Sendable {
 }
 
 /// Description of a single agent run request.
-struct AgentRunRequest: Equatable, Sendable {
+struct SchedulerRunRequest: Equatable, Sendable {
     let runID: UUID
     let cardPath: String
     let flow: AgentFlow
@@ -97,12 +65,7 @@ struct AgentRunRequest: Equatable, Sendable {
     }
 }
 
-/// Completion status reported when a run finishes.
-enum AgentRunCompletion: Equatable, Sendable {
-    case succeeded
-    case failed(reason: String?)
-    case canceled
-}
+// Note: AgentRunCompletion is now a typealias for RunOutcome in RunOutcome.swift
 
 /// Backpressure metadata returned to callers when the queue is saturated.
 struct AgentBackpressure: Equatable, Sendable {
@@ -152,25 +115,25 @@ private struct RunLock: Sendable {
 
 /// Notifies the scheduler about lifecycle transitions so the UI can update card frontmatter.
 struct AgentRunLifecycleHooks: Sendable {
-    var onQueue: @Sendable (AgentRunRequest) async -> Void
-    var onStart: @Sendable (AgentRunRequest) async -> Void
-    var onFinish: @Sendable (AgentRunRequest, AgentRunCompletion) async -> Void
+    var onQueue: @Sendable (SchedulerRunRequest) async -> Void
+    var onStart: @Sendable (SchedulerRunRequest) async -> Void
+    var onFinish: @Sendable (SchedulerRunRequest, AgentRunCompletion) async -> Void
 
     static let noop = AgentRunLifecycleHooks(onQueue: { _ in },
                                              onStart: { _ in },
                                              onFinish: { _, _ in })
 }
 
-/// Abstracts the worker launcher (CodexSupervisor.xpc) so the scheduler can be tested in isolation.
+/// Abstracts the worker launcher (AgentSupervisor.xpc) so the scheduler can be tested in isolation.
 protocol AgentWorkerLaunching: Sendable {
-    func launch(run: AgentRunRequest) async throws
+    func launch(run: SchedulerRunRequest) async throws
 }
 
-/// Coordinates global and per-flow concurrency, per-card locks, and queue/backoff rules for Codex runs.
+/// Coordinates global and per-flow concurrency, per-card locks, and queue/backoff rules for agent runs.
 @MainActor
 final class AgentScheduler {
     private struct QueueEntry: Sendable {
-        let request: AgentRunRequest
+        let request: SchedulerRunRequest
         let phase: String
         let requiresPhaseLock: Bool
         let attempts: Int
@@ -250,7 +213,7 @@ final class AgentScheduler {
             return .deferred(backpressure)
         }
 
-        let request = AgentRunRequest(cardPath: cardPath,
+        let request = SchedulerRunRequest(cardPath: cardPath,
                                        flow: flow,
                                        isParallelizable: isParallelizable,
                                        enqueuedAt: now())
@@ -396,7 +359,7 @@ final class AgentScheduler {
             return
         }
 
-        let delay = config.retryPolicy.delay(forAttempt: attempts, random: random)
+        let delay = config.retryPolicy.delay(forAttempt: attempts, random: random) ?? .zero
         backoffTasks[entry.request.cardPath]?.cancel()
         backoffTasks[entry.request.cardPath] = Task { [weak self] in
             guard let self else { return }

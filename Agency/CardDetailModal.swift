@@ -57,7 +57,7 @@ struct CardDetailModal: View {
     @State private var appendHistory = false
     @State private var skipRawRefreshOnce = false
     @State private var selectedFlow: AgentFlow = .implement
-    @State private var selectedBackend: AgentBackendKind = .codex
+    @State private var selectedBackend: AgentBackendKind = .xpc
     @State private var agentError: String?
     @State private var externalChangePending = false
     @State private var chatFilter: AgentChatMessage.Role?
@@ -1163,8 +1163,8 @@ private struct AgentControlPanel: View {
                 .foregroundStyle(DesignTokens.Colors.textSecondary)
 
             Picker("Backend", selection: $selectedBackend) {
-                Text("Codex").tag(AgentBackendKind.codex)
-                Text("CLI").tag(AgentBackendKind.cli)
+                Text("XPC Worker").tag(AgentBackendKind.xpc)
+                Text("Phase Scaffolding").tag(AgentBackendKind.phaseScaffolding)
                 HStack {
                     Text("Claude Code")
                     if !isClaudeCodeAvailable {

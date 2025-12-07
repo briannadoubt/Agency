@@ -97,7 +97,7 @@ final class PhaseCreationController {
                                 taskHints: hints,
                                 autoCreateCards: form.autoCreateCards,
                                 projectRoot: projectSnapshot.rootURL)
-        let request = CodexRunRequest(runID: runID,
+        let request = WorkerRunRequest(runID: runID,
                                       flow: AgentFlow.plan.rawValue,
                                       cardRelativePath: "phase-creation/\(slug(from: trimmedLabel))",
                                       projectBookmark: bookmarkData,

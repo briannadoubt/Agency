@@ -1,20 +1,23 @@
 import Foundation
 
-/// Executor that drives real Codex workers through the supervisor, streaming their log file into UI events.
-struct CodexAgentExecutor: AgentExecutor {
+/// Executor that drives XPC-based agent workers through the supervisor, streaming their log file into UI events.
+struct XPCAgentExecutor: AgentExecutor {
     private let client: any SupervisorClienting
     private let streamer: any WorkerLogStreaming
     private let fileManager: FileManager
+    private let logging: ExecutorLogging
 
     init(client: any SupervisorClienting = SupervisorClient(),
          streamer: any WorkerLogStreaming = WorkerLogStreamer(),
-         fileManager: FileManager = .default) {
+         fileManager: FileManager = .default,
+         logging: ExecutorLogging = ExecutorLogging()) {
         self.client = client
         self.streamer = streamer
         self.fileManager = fileManager
+        self.logging = logging
     }
 
-    func run(request: CodexRunRequest,
+    func run(request: WorkerRunRequest,
              logURL: URL,
              outputDirectory: URL,
              emit: @escaping @Sendable (WorkerLogEvent) async -> Void) async {
@@ -41,12 +44,12 @@ struct CodexAgentExecutor: AgentExecutor {
 
     // MARK: - Internals
 
-    private func performRun(request: CodexRunRequest,
+    private func performRun(request: WorkerRunRequest,
                             logURL: URL,
                             outputDirectory: URL,
                             tracker: FinishTracker,
                             emit: @escaping @Sendable (WorkerLogEvent) async -> Void) async throws {
-        try prepareLogDirectory(for: logURL)
+        try logging.prepareLogDirectory(for: logURL)
         try await launchWorker(request: request)
 
         for try await event in streamer.stream(logURL: logURL) {
@@ -64,14 +67,7 @@ struct CodexAgentExecutor: AgentExecutor {
         }
     }
 
-    private func prepareLogDirectory(for logURL: URL) throws {
-        let directory = logURL.deletingLastPathComponent()
-        try fileManager.createDirectory(at: directory,
-                                        withIntermediateDirectories: true,
-                                        attributes: nil)
-    }
-
-    private func launchWorker(request: CodexRunRequest) async throws {
+    private func launchWorker(request: WorkerRunRequest) async throws {
         switch await client.launch(request: request) {
         case .success:
             return

@@ -3,10 +3,10 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>dev.agency.CodexWorker</string>
+    <string>dev.agency.AgentWorker</string>
     <key>ProgramArguments</key>
     <array>
-        <string>@executable_path/../Helpers/CodexWorker</string>
+        <string>@executable_path/../Helpers/AgentWorker</string>
         <string>--endpoint</string>
         <string>$(SMEndpointName)</string>
     </array>

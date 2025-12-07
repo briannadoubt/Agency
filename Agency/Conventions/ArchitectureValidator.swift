@@ -98,9 +98,3 @@ struct ArchitectureValidator {
         url.path.replacingOccurrences(of: root.path + "/", with: "")
     }
 }
-
-private extension String {
-    func trimmed() -> String {
-        trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-}

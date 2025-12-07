@@ -5,18 +5,19 @@ struct ClaudeCodeExecutor: AgentExecutor {
     private let locator: ClaudeCodeLocator
     private let fileManager: FileManager
     private let streamParser: ClaudeStreamParser
-    private let dateFormatter: ISO8601DateFormatter
+    private let logging: ExecutorLogging
 
     init(locator: ClaudeCodeLocator = ClaudeCodeLocator(),
          fileManager: FileManager = .default,
-         streamParser: ClaudeStreamParser = ClaudeStreamParser()) {
+         streamParser: ClaudeStreamParser = ClaudeStreamParser(),
+         logging: ExecutorLogging = ExecutorLogging()) {
         self.locator = locator
         self.fileManager = fileManager
         self.streamParser = streamParser
-        self.dateFormatter = ISO8601DateFormatter()
+        self.logging = logging
     }
 
-    func run(request: CodexRunRequest,
+    func run(request: WorkerRunRequest,
              logURL: URL,
              outputDirectory: URL,
              emit: @escaping @Sendable (WorkerLogEvent) async -> Void) async {
@@ -29,11 +30,8 @@ struct ClaudeCodeExecutor: AgentExecutor {
         }
 
         do {
-            try prepareLogDirectory(for: logURL)
-            try record(event: "workerReady",
-                       extra: ["runID": request.runID.uuidString,
-                               "flow": request.flow],
-                       logURL: logURL)
+            try logging.prepareLogDirectory(for: logURL)
+            try logging.recordReady(runID: request.runID, flow: request.flow, to: logURL)
             await emit(.log("Claude Code executor starting (\(request.flow))"))
 
             // Validate prerequisites
@@ -63,12 +61,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
                 summary: result.exitCode == 0 ? "Claude Code completed successfully" : "Claude Code failed"
             )
 
-            try record(event: "workerFinished",
-                       extra: ["status": workerResult.status.rawValue,
-                               "summary": workerResult.summary,
-                               "durationMs": String(Int(duration * 1000)),
-                               "exitCode": String(result.exitCode)],
-                       logURL: logURL)
+            try logging.recordFinished(result: workerResult, to: logURL)
             await emit(.finished(workerResult))
 
         } catch is CancellationError {
@@ -79,9 +72,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
                                          bytesRead: 0,
                                          bytesWritten: 0,
                                          summary: "Canceled")
-            try? record(event: "workerFinished",
-                        extra: ["status": "canceled", "summary": "Canceled"],
-                        logURL: logURL)
+            try? logging.recordFinished(result: result, to: logURL)
             await emit(.finished(result))
         } catch {
             let duration = Date().timeIntervalSince(start)
@@ -91,9 +82,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
                                          bytesRead: 0,
                                          bytesWritten: 0,
                                          summary: error.localizedDescription)
-            try? record(event: "workerFinished",
-                        extra: ["status": "failed", "summary": error.localizedDescription],
-                        logURL: logURL)
+            try? logging.recordFinished(result: result, to: logURL)
             await emit(.finished(result))
         }
     }
@@ -119,11 +108,6 @@ struct ClaudeCodeExecutor: AgentExecutor {
 
     // MARK: - Private
 
-    private func prepareLogDirectory(for logURL: URL) throws {
-        let directory = logURL.deletingLastPathComponent()
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-    }
-
     private func resolveCLIPath() async throws -> String {
         let override = await MainActor.run {
             ClaudeCodeSettings.shared.cliPathOverride
@@ -146,7 +130,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
         return env
     }
 
-    private func buildPrompt(from request: CodexRunRequest) -> String {
+    private func buildPrompt(from request: WorkerRunRequest) -> String {
         // Build a prompt that instructs Claude to work on the card
         var prompt = """
         You are working on a task card at: \(request.cardRelativePath)
@@ -227,7 +211,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
                                 let progress = min(0.1 + Double(messageCount) * 0.05, 0.9)
                                 await emit(.progress(progress, message: nil))
                             }
-                            try? record(event: "log", extra: ["message": String(line.prefix(500))], logURL: logURL)
+                            try? logging.recordLog(message: String(line.prefix(500)), to: logURL)
                         }
                         lineBuffer.removeAll(keepingCapacity: true)
                     } else {
@@ -265,24 +249,5 @@ struct ClaudeCodeExecutor: AgentExecutor {
         let stdout = "" // Already streamed
 
         return CLIResult(stdout: stdout, stderr: stderr, exitCode: process.terminationStatus)
-    }
-
-    private func record(event: String, extra: [String: String], logURL: URL) throws {
-        let entry = ["timestamp": dateFormatter.string(from: .now),
-                     "event": event]
-            .merging(extra) { $1 }
-        let data = try JSONSerialization.data(withJSONObject: entry)
-        try appendLine(data, to: logURL)
-    }
-
-    private func appendLine(_ data: Data, to url: URL) throws {
-        if !fileManager.fileExists(atPath: url.path) {
-            fileManager.createFile(atPath: url.path, contents: nil)
-        }
-        let handle = try FileHandle(forWritingTo: url)
-        defer { try? handle.close() }
-        try handle.seekToEnd()
-        handle.write(data)
-        handle.write(Data([0x0a]))
     }
 }

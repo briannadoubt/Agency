@@ -113,8 +113,8 @@ final class AgentRunnerTests: XCTestCase {
     @MainActor
     func testPlanFlowCreatesPhaseAndRefreshesLoader() async throws {
         let (card, tempRoot) = try makeCard()
-        let runner = AgentRunner(executors: [.cli: CLIPhaseExecutor()])
-        let start = await runner.startRun(card: card, flow: .plan, backend: .cli)
+        let runner = AgentRunner(executors: [.phaseScaffolding: CLIPhaseExecutor()])
+        let start = await runner.startRun(card: card, flow: .plan, backend: .phaseScaffolding)
         guard case .success(let state) = start else {
             XCTFail("Plan run failed to start")
             try FileManager.default.removeItem(at: tempRoot)
@@ -156,9 +156,9 @@ final class AgentRunnerTests: XCTestCase {
                                       bytesWritten: 0,
                                       summary: "done"))
         ])
-        let runner = AgentRunner(executors: [.cli: executor])
+        let runner = AgentRunner(executors: [.phaseScaffolding: executor])
 
-        let start = await runner.startRun(card: card, flow: .plan, backend: .cli)
+        let start = await runner.startRun(card: card, flow: .plan, backend: .phaseScaffolding)
         guard case .success = start else {
             XCTFail("Run failed to start")
             return
@@ -280,7 +280,7 @@ private final class StubPlanExecutor: AgentExecutor {
         self.events = events
     }
 
-    func run(request: CodexRunRequest,
+    func run(request: WorkerRunRequest,
              logURL: URL,
              outputDirectory: URL,
              emit: @escaping @Sendable (WorkerLogEvent) async -> Void) async {
@@ -294,7 +294,7 @@ private struct FailingExecutor: AgentExecutor {
     let exitCode: Int32
     let summary: String
 
-    func run(request: CodexRunRequest,
+    func run(request: WorkerRunRequest,
              logURL: URL,
              outputDirectory: URL,
              emit: @escaping @Sendable (WorkerLogEvent) async -> Void) async {

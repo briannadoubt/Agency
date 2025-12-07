@@ -7,10 +7,10 @@ import ServiceManagement
 /// Singleton that exposes the supervisor-facing API to the SwiftUI app.
 /// It wraps SMAppService registration, worker launch lifecycle, cancellation, and reconnects.
 @MainActor
-final class CodexSupervisor {
-    static let shared = CodexSupervisor()
+final class AgentSupervisor {
+    static let shared = AgentSupervisor()
 
-    private let logger = Logger(subsystem: "dev.agency.app", category: "CodexSupervisor")
+    private let logger = Logger(subsystem: "dev.agency.app", category: "AgentSupervisor")
     private let launcher: any WorkerLaunching
     private let backoffPolicy: WorkerBackoffPolicy
     private let capabilityChecklist: CapabilityChecklist
@@ -37,7 +37,7 @@ final class CodexSupervisor {
 
     /// Launch a single-use worker for the provided request.
     /// Returns an endpoint the app can use to attach to the worker's XPC stream.
-    func launchWorker(request: CodexRunRequest) async throws -> WorkerEndpoint {
+    func launchWorker(request: WorkerRunRequest) async throws -> WorkerEndpoint {
         try registerIfNeeded()
         let endpoint = try await launcher.launch(request: request)
         let process = launcher.activeProcess(for: request.runID)
@@ -72,7 +72,7 @@ final class CodexSupervisor {
     private func ensureCapabilities() throws {
         let missing = capabilityChecklist.missingCapabilities().map(\.rawValue)
         guard missing.isEmpty else {
-            throw CodexSupervisorError.capabilitiesMissing(missing)
+            throw AgentSupervisorError.capabilitiesMissing(missing)
         }
     }
 }

@@ -361,19 +361,20 @@ struct AgentFlowCoordinatorTests {
     }
 
     @Test func backoffPolicyCapsAndAddsJitter() {
-        let policy = AgentBackoffPolicy(baseDelay: 30,
-                                        multiplier: 2,
-                                        jitterFraction: 0.1,
-                                        maxDelay: 300,
-                                        maxRetries: 5,
-                                        random: { 0 })
+        let policy = BackoffPolicy(baseDelay: .seconds(30),
+                                   multiplier: 2,
+                                   jitter: 0.1,
+                                   maxDelay: .seconds(300),
+                                   maxRetries: 5)
+        // Use custom random function that returns 0 (no jitter)
+        let noJitter: (ClosedRange<Double>) -> Double = { _ in 0 }
 
-        #expect(policy.delay(forFailureCount: 1) == 30)
-        #expect(policy.delay(forFailureCount: 2) == 60)
-        #expect(policy.delay(forFailureCount: 3) == 120)
-        #expect(policy.delay(forFailureCount: 4) == 240)
-        #expect(policy.delay(forFailureCount: 5) == 300)
-        #expect(policy.delay(forFailureCount: 6) == nil)
+        #expect(policy.delay(forAttempt: 1, random: noJitter) == .seconds(30))
+        #expect(policy.delay(forAttempt: 2, random: noJitter) == .seconds(60))
+        #expect(policy.delay(forAttempt: 3, random: noJitter) == .seconds(120))
+        #expect(policy.delay(forAttempt: 4, random: noJitter) == .seconds(240))
+        #expect(policy.delay(forAttempt: 5, random: noJitter) == .seconds(300))
+        #expect(policy.delay(forAttempt: 6, random: noJitter) == nil)
     }
 
     @Test func logLocatorBuildsPerRunPaths() throws {

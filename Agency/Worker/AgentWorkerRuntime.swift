@@ -3,8 +3,8 @@ import os.log
 
 /// Lightweight runtime used by the worker helper executable. This file deliberately avoids a `@main`
 /// entry so the code can live in the primary target until the helper target is wired up in Xcode.
-struct CodexWorkerRuntime {
-    let payload: CodexRunRequest
+struct AgentWorkerRuntime {
+    let payload: WorkerRunRequest
     let endpointName: String
     let logDirectory: URL
     let outputDirectory: URL
@@ -14,7 +14,7 @@ struct CodexWorkerRuntime {
 
     private let logger = Logger(subsystem: "dev.agency.worker", category: "runtime")
 
-    init(payload: CodexRunRequest,
+    init(payload: WorkerRunRequest,
          endpointName: String,
          logDirectory: URL,
          outputDirectory: URL,
@@ -43,27 +43,16 @@ struct CodexWorkerRuntime {
                        extra: ["runID": payload.runID.uuidString,
                                "project": project.url.path,
                                "output": outputDirectory.path,
+                               "backend": payload.backend.rawValue,
                                "bookmarkStale": "\(project.bookmarkWasStale)"])
 
-            let steps = 6
-            for step in 1...steps {
-                try Task.checkCancellation()
-                try await Task.sleep(for: .milliseconds(25))
-                let progress = Double(step) / Double(steps)
-                try record(event: "progress",
-                           extra: ["percent": String(progress),
-                                   "message": "Step \(step)/\(steps)"])
+            // Dispatch based on backend type
+            switch payload.backend {
+            case .xpc:
+                try await runXPCBackend(project: project, start: start)
+            case .claudeCode:
+                try await runClaudeCode(project: project, start: start)
             }
-
-            let durationMs = Int(Date().timeIntervalSince(start) * 1000)
-            try record(event: "workerFinished",
-                       extra: ["status": WorkerRunResult.Status.succeeded.rawValue,
-                               "card": payload.cardRelativePath,
-                               "summary": "Completed \(payload.flow) flow",
-                               "durationMs": String(durationMs),
-                               "exitCode": "0",
-                               "bytesRead": "0",
-                               "bytesWritten": "0"])
         } catch is CancellationError {
             let durationMs = Int(Date().timeIntervalSince(start) * 1000)
             do {
@@ -96,7 +85,173 @@ struct CodexWorkerRuntime {
         }
     }
 
+    // MARK: - Backend Implementations
+
+    private func runXPCBackend(project: WorkerSandbox.ScopedProject, start: Date) async throws {
+        // Placeholder for XPC backend integration
+        // For now, simulate progress steps
+        let steps = 6
+        for step in 1...steps {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(25))
+            let progress = Double(step) / Double(steps)
+            try record(event: "progress",
+                       extra: ["percent": String(progress),
+                               "message": "Agent step \(step)/\(steps)"])
+        }
+
+        let durationMs = Int(Date().timeIntervalSince(start) * 1000)
+        try record(event: "workerFinished",
+                   extra: ["status": WorkerRunResult.Status.succeeded.rawValue,
+                           "card": payload.cardRelativePath,
+                           "summary": "Completed \(payload.flow) flow via agent",
+                           "durationMs": String(durationMs),
+                           "exitCode": "0",
+                           "bytesRead": "0",
+                           "bytesWritten": "0"])
+    }
+
+    private func runClaudeCode(project: WorkerSandbox.ScopedProject, start: Date) async throws {
+        // Run Claude Code CLI in the worker process
+        let cliPath = try locateClaudeCLI()
+        let prompt = buildPrompt()
+
+        try record(event: "progress",
+                   extra: ["percent": "0.1",
+                           "message": "Launching Claude Code CLI..."])
+
+        let result = try await runCLI(
+            executablePath: cliPath,
+            arguments: ["-p", prompt, "--output-format", "stream-json", "--max-turns", "50"],
+            workingDirectory: project.url
+        )
+
+        let durationMs = Int(Date().timeIntervalSince(start) * 1000)
+        let status: WorkerRunResult.Status = result.exitCode == 0 ? .succeeded : .failed
+        try record(event: "workerFinished",
+                   extra: ["status": status.rawValue,
+                           "card": payload.cardRelativePath,
+                           "summary": result.exitCode == 0 ? "Completed via Claude Code" : "Claude Code failed",
+                           "durationMs": String(durationMs),
+                           "exitCode": String(result.exitCode),
+                           "bytesRead": "0",
+                           "bytesWritten": "0"])
+    }
+
+    private func locateClaudeCLI() throws -> String {
+        // Check common locations for claude CLI
+        let paths = [
+            "/usr/local/bin/claude",
+            "/opt/homebrew/bin/claude",
+            "\(NSHomeDirectory())/.local/bin/claude",
+            "\(NSHomeDirectory())/.npm/bin/claude"
+        ]
+        for path in paths {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+        throw WorkerRuntimeError.cliNotFound("claude")
+    }
+
+    private func buildPrompt() -> String {
+        """
+        You are working on a task card at: \(payload.cardRelativePath)
+
+        Please implement the requirements specified in this card. Follow these steps:
+        1. Read the card file to understand the acceptance criteria
+        2. Implement the required changes
+        3. Run any relevant tests
+        4. Update the card to mark completed items
+
+        Work through the acceptance criteria systematically.
+        """
+    }
+
+    private struct CLIResult {
+        let exitCode: Int32
+        let stdout: String
+        let stderr: String
+    }
+
+    private func runCLI(executablePath: String,
+                        arguments: [String],
+                        workingDirectory: URL) async throws -> CLIResult {
+        try Task.checkCancellation()
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = arguments
+        process.currentDirectoryURL = workingDirectory
+        process.environment = ProcessInfo.processInfo.environment
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        // Stream stdout to log file
+        let logDir = logDirectory
+        let validator = accessValidator
+        let formatter = dateFormatter
+        let streamTask = Task {
+            let handle = stdoutPipe.fileHandleForReading
+            var lineBuffer = Data()
+
+            while !Task.isCancelled {
+                let data = handle.availableData
+                if data.isEmpty { break }
+
+                for byte in data {
+                    if byte == 0x0A {
+                        if let line = String(data: lineBuffer, encoding: .utf8)?
+                            .trimmingCharacters(in: .whitespacesAndNewlines),
+                           !line.isEmpty {
+                            try? Self.recordLog(event: "log",
+                                                extra: ["message": String(line.prefix(500))],
+                                                logDirectory: logDir,
+                                                dateFormatter: formatter,
+                                                accessValidator: validator)
+                        }
+                        lineBuffer.removeAll(keepingCapacity: true)
+                    } else {
+                        lineBuffer.append(byte)
+                    }
+                }
+            }
+        }
+
+        try process.run()
+
+        await withTaskCancellationHandler {
+            process.waitUntilExit()
+        } onCancel: {
+            process.terminate()
+        }
+
+        await streamTask.value
+
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+
+        return CLIResult(exitCode: process.terminationStatus, stdout: "", stderr: stderr)
+    }
+
+    // MARK: - Logging
+
     private func record(event: String, extra: [String: String]) throws {
+        try Self.recordLog(event: event,
+                           extra: extra,
+                           logDirectory: logDirectory,
+                           dateFormatter: dateFormatter,
+                           accessValidator: accessValidator)
+    }
+
+    private static func recordLog(event: String,
+                                   extra: [String: String],
+                                   logDirectory: URL,
+                                   dateFormatter: ISO8601DateFormatter,
+                                   accessValidator: FileAccessValidator) throws {
         let logURL = logDirectory.appendingPathComponent("worker.log")
         let entry = ["timestamp": dateFormatter.string(from: .now),
                      "event": event]
@@ -106,7 +261,7 @@ struct CodexWorkerRuntime {
         try appendLine(line, to: logURL)
     }
 
-    private func appendLine(_ data: Data, to url: URL) throws {
+    private static func appendLine(_ data: Data, to url: URL) throws {
         if !FileManager.default.fileExists(atPath: url.path) {
             FileManager.default.createFile(atPath: url.path, contents: nil)
         }
@@ -118,10 +273,23 @@ struct CodexWorkerRuntime {
     }
 }
 
+// MARK: - Errors
+
+enum WorkerRuntimeError: LocalizedError {
+    case cliNotFound(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .cliNotFound(let name):
+            return "\(name) CLI not found in PATH or common locations"
+        }
+    }
+}
+
 // MARK: - Bootstrap Helpers
 
-enum CodexWorkerBootstrap {
-    static func runtimeFromEnvironment(arguments: [String]) -> CodexWorkerRuntime? {
+enum AgentWorkerBootstrap {
+    static func runtimeFromEnvironment(arguments: [String]) -> AgentWorkerRuntime? {
         let env = ProcessInfo.processInfo.environment
         guard
             let runIDString = env["CODEX_RUN_ID"],
@@ -130,7 +298,7 @@ enum CodexWorkerBootstrap {
             let logPath = env["CODEX_LOG_DIRECTORY"]
         else { return nil }
 
-        let payload: CodexRunRequest
+        let payload: WorkerRunRequest
         if let payloadPathIndex = arguments.firstIndex(of: "--payload"),
            arguments.indices.contains(payloadPathIndex + 1) {
             let url = URL(fileURLWithPath: arguments[payloadPathIndex + 1])
@@ -141,37 +309,39 @@ enum CodexWorkerBootstrap {
 
         let bookmarkOverride = env["CODEX_PROJECT_BOOKMARK_BASE64"].flatMap { Data(base64Encoded: $0) }
         let outputDirectory = env["CODEX_OUTPUT_DIRECTORY"].map { URL(fileURLWithPath: $0) } ?? payload.outputDirectory
-        let resolvedPayload = CodexRunRequest(runID: payload.runID,
+        let resolvedPayload = WorkerRunRequest(runID: payload.runID,
                                               flow: payload.flow,
                                               cardRelativePath: payload.cardRelativePath,
                                               projectBookmark: bookmarkOverride ?? payload.projectBookmark,
                                               logDirectory: payload.logDirectory,
                                               outputDirectory: outputDirectory,
                                               allowNetwork: payload.allowNetwork,
-                                              cliArgs: payload.cliArgs)
+                                              cliArgs: payload.cliArgs,
+                                              backend: payload.backend)
 
         let allowNetwork = env["CODEX_ALLOW_NETWORK"] == "1"
-        return CodexWorkerRuntime(payload: resolvedPayload,
+        return AgentWorkerRuntime(payload: resolvedPayload,
                                   endpointName: endpointName,
                                   logDirectory: URL(fileURLWithPath: logPath),
                                   outputDirectory: outputDirectory,
                                   allowNetwork: allowNetwork)
     }
 
-    private static func decodePayload(at url: URL) throws -> CodexRunRequest {
+    private static func decodePayload(at url: URL) throws -> WorkerRunRequest {
         let data = try Data(contentsOf: url)
-        return try JSONDecoder().decode(CodexRunRequest.self, from: data)
+        return try JSONDecoder().decode(WorkerRunRequest.self, from: data)
     }
 
-    private static func placeholderPayload(runID: UUID) -> CodexRunRequest {
-        CodexRunRequest(runID: runID,
+    private static func placeholderPayload(runID: UUID) -> WorkerRunRequest {
+        WorkerRunRequest(runID: runID,
                         flow: "unknown",
                         cardRelativePath: "",
                         projectBookmark: Data(),
                         logDirectory: FileManager.default.temporaryDirectory,
                         outputDirectory: FileManager.default.temporaryDirectory,
                         allowNetwork: false,
-                        cliArgs: [])
+                        cliArgs: [],
+                        backend: .xpc)
     }
 }
 

@@ -3,15 +3,15 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>dev.agency.CodexSupervisor</string>
+    <string>dev.agency.AgentSupervisor</string>
     <key>MachServices</key>
     <dict>
-        <key>dev.agency.CodexSupervisor</key>
+        <key>dev.agency.AgentSupervisor</key>
         <true/>
     </dict>
     <key>ProgramArguments</key>
     <array>
-        <string>@executable_path/../XPCServices/CodexSupervisor</string>
+        <string>@executable_path/../XPCServices/AgentSupervisor</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

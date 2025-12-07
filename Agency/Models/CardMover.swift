@@ -55,7 +55,7 @@ final class CardMover {
         let phaseURL = sourceURL.deletingLastPathComponent().deletingLastPathComponent()
         let destinationDirectory = phaseURL.appendingPathComponent(newStatus.folderName, isDirectory: true)
 
-        guard directoryExists(at: destinationDirectory) else {
+        guard fileManager.directoryExists(at: destinationDirectory) else {
             throw CardMoveError.destinationFolderMissing(newStatus)
         }
 
@@ -98,12 +98,6 @@ final class CardMover {
         }
     }
 
-    private func directoryExists(at url: URL) -> Bool {
-        var isDirectory: ObjCBool = false
-        let exists = fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
-        return exists && isDirectory.boolValue
-    }
-
     private func stagingURL(for directory: URL, filename: String) -> URL {
         directory.appendingPathComponent(".\(filename).staging-\(UUID().uuidString)")
     }
@@ -128,11 +122,7 @@ final class CardMover {
     private static func historyEntry(from source: CardStatus,
                                      to destination: CardStatus,
                                      dateProvider: @escaping () -> Date) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .iso8601)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        let today = formatter.string(from: dateProvider())
+        let today = DateFormatters.dateString(from: dateProvider())
         return "\(today) - Moved from \(source.displayName) to \(destination.displayName)."
     }
 }

@@ -80,14 +80,14 @@ struct PhaseCreator {
         }
 
         let projectURL = projectRoot.appendingPathComponent(ProjectConventions.projectRootName, isDirectory: true)
-        guard directoryExists(at: projectURL) else { throw PhaseScaffoldingError.missingProjectRoot }
+        guard fileManager.directoryExists(at: projectURL) else { throw PhaseScaffoldingError.missingProjectRoot }
 
         let slug = makeSlug(from: label)
         let nextNumber = try nextPhaseNumber(at: projectURL)
         let phaseName = "phase-\(nextNumber)-\(slug)"
         let phaseURL = projectURL.appendingPathComponent(phaseName, isDirectory: true)
 
-        guard !directoryExists(at: phaseURL) else {
+        guard !fileManager.directoryExists(at: phaseURL) else {
             throw PhaseScaffoldingError.phaseAlreadyExists(phaseName)
         }
 
@@ -299,11 +299,7 @@ struct PhaseCreator {
         lines.append("```")
         lines.append("")
 
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .iso8601)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        let today = formatter.string(from: dateProvider())
+        let today = DateFormatters.dateString(from: dateProvider())
 
         lines.append(contentsOf: [
             "History:",
@@ -416,12 +412,6 @@ struct PhaseCreator {
         }
 
         return (created, skipped)
-    }
-
-    private func directoryExists(at url: URL) -> Bool {
-        var isDirectory: ObjCBool = false
-        let exists = fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
-        return exists && isDirectory.boolValue
     }
 
     private func makeSlug(from title: String) -> String {

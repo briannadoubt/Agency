@@ -4,7 +4,7 @@ import Observation
 /// Protocol abstraction so executors and tests can swap in stub clients.
 protocol SupervisorClienting {
     @MainActor
-    func launch(request: CodexRunRequest) async -> Result<WorkerEndpoint, Error>
+    func launch(request: WorkerRunRequest) async -> Result<WorkerEndpoint, Error>
     func cancel(runID: UUID) async
     func reconnect(runID: UUID) async -> WorkerEndpoint?
     func backoffDelay(after failures: Int) async -> Duration
@@ -13,14 +13,14 @@ protocol SupervisorClienting {
 /// Thin, testable wrapper the UI can hold onto without knowing about the actor type directly.
 @Observable
 final class SupervisorClient: SupervisorClienting {
-    private let supervisor: CodexSupervisor
+    private let supervisor: AgentSupervisor
 
-    init(supervisor: CodexSupervisor = .shared) {
+    init(supervisor: AgentSupervisor = .shared) {
         self.supervisor = supervisor
     }
 
     @MainActor
-    func launch(request: CodexRunRequest) async -> Result<WorkerEndpoint, Error> {
+    func launch(request: WorkerRunRequest) async -> Result<WorkerEndpoint, Error> {
         do {
             let endpoint = try await supervisor.launchWorker(request: request)
             return .success(endpoint)

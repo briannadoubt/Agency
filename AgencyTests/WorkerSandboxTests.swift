@@ -28,7 +28,7 @@ struct WorkerSandboxTests {
         let root = fm.temporaryDirectory.appendingPathComponent("agency-run-dirs-\(UUID().uuidString)",
                                                                 isDirectory: true)
         let logDirectory = root.appendingPathComponent("logs", isDirectory: true)
-        let request = CodexRunRequest(runID: UUID(),
+        let request = WorkerRunRequest(runID: UUID(),
                                       flow: "test",
                                       cardRelativePath: "card.md",
                                       projectBookmark: Data([0x00]),
@@ -58,7 +58,7 @@ struct WorkerSandboxTests {
         try fm.createDirectory(at: logDirectory, withIntermediateDirectories: true)
         try fm.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
-        let request = CodexRunRequest(runID: UUID(),
+        let request = WorkerRunRequest(runID: UUID(),
                                       flow: "test",
                                       cardRelativePath: "project/phase/card.md",
                                       projectBookmark: Data(), // invalid bookmark to force failure
@@ -67,7 +67,7 @@ struct WorkerSandboxTests {
                                       allowNetwork: false,
                                       cliArgs: [])
 
-        let runtime = CodexWorkerRuntime(payload: request,
+        let runtime = AgentWorkerRuntime(payload: request,
                                          endpointName: "test",
                                          logDirectory: logDirectory,
                                          outputDirectory: outputDirectory,

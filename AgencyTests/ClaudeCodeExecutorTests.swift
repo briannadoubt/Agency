@@ -85,7 +85,7 @@ struct ClaudeCodeExecutorTests {
         #expect(AgentBackendKind.claudeCode.rawValue == "claudeCode")
     }
 
-    // MARK: - CodexRunRequest Extension Tests
+    // MARK: - WorkerRunRequest Extension Tests
 
     @MainActor
     @Test func resolvedProjectRootReturnsNilForInvalidBookmark() {
@@ -105,8 +105,8 @@ struct ClaudeCodeExecutorTests {
         cardPath: String = "project/test-phase/card.md",
         cliArgs: [String] = [],
         projectBookmark: Data = Data()
-    ) -> CodexRunRequest {
-        CodexRunRequest(
+    ) -> WorkerRunRequest {
+        WorkerRunRequest(
             runID: UUID(),
             flow: "implement",
             cardRelativePath: cardPath,
@@ -123,7 +123,7 @@ struct ClaudeCodeExecutorTests {
 
 extension ClaudeCodeExecutor {
     /// Exposes buildPrompt for testing purposes.
-    func testBuildPrompt(from request: CodexRunRequest) -> String {
+    func testBuildPrompt(from request: WorkerRunRequest) -> String {
         // Replicate the prompt building logic for testing
         var prompt = """
         You are working on a task card at: \(request.cardRelativePath)

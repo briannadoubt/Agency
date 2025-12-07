@@ -35,7 +35,7 @@ struct ProjectScanner {
     func scan(rootURL: URL) throws -> [PhaseSnapshot] {
         let projectURL = rootURL.appendingPathComponent(ProjectConventions.projectRootName, isDirectory: true)
 
-        guard directoryExists(at: projectURL) else {
+        guard fileManager.directoryExists(at: projectURL) else {
             throw ProjectScannerError.missingProjectRoot(projectURL)
         }
 
@@ -62,7 +62,7 @@ struct ProjectScanner {
         for status in CardStatus.allCases {
             let statusURL = phase.path.appendingPathComponent(status.folderName, isDirectory: true)
 
-            guard directoryExists(at: statusURL) else {
+            guard fileManager.directoryExists(at: statusURL) else {
                 throw ProjectScannerError.missingStatusDirectory(phase: phase, status: status)
             }
 
@@ -110,12 +110,6 @@ struct ProjectScanner {
                                                                   options: [.skipsHiddenFiles]) else { return [] }
 
         return contents.filter(isRegularFile)
-    }
-
-    private func directoryExists(at url: URL) -> Bool {
-        var isDirectory: ObjCBool = false
-        let exists = fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
-        return exists && isDirectory.boolValue
     }
 
     private func isDirectory(_ url: URL) -> Bool {

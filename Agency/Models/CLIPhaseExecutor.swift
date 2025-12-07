@@ -4,38 +4,34 @@ import Foundation
 struct CLIPhaseExecutor: AgentExecutor {
     private let fileManager: FileManager
     private let command: PhaseScaffoldingCommand
-    private let dateFormatter: ISO8601DateFormatter
+    private let logging: ExecutorLogging
 
     init(fileManager: FileManager = .default,
-         command: PhaseScaffoldingCommand = PhaseScaffoldingCommand()) {
+         command: PhaseScaffoldingCommand = PhaseScaffoldingCommand(),
+         logging: ExecutorLogging = ExecutorLogging()) {
         self.fileManager = fileManager
         self.command = command
-        self.dateFormatter = ISO8601DateFormatter()
+        self.logging = logging
     }
 
-    func run(request: CodexRunRequest,
+    func run(request: WorkerRunRequest,
              logURL: URL,
              outputDirectory: URL,
              emit: @escaping @Sendable (WorkerLogEvent) async -> Void) async {
         let start = Date()
         do {
-            try prepareLogDirectory(for: logURL)
-            try record(event: "workerReady",
-                       extra: ["runID": request.runID.uuidString,
-                               "flow": request.flow],
-                       logURL: logURL)
+            try logging.prepareLogDirectory(for: logURL)
+            try logging.recordReady(runID: request.runID, flow: request.flow, to: logURL)
             await emit(.log("CLI backend starting (\(request.flow))"))
 
             let cliStartMessage = "Invoking phase-scaffolding command…"
-            try record(event: "progress",
-                       extra: ["percent": "0.1", "message": cliStartMessage],
-                       logURL: logURL)
+            try logging.recordProgress(percent: 0.1, message: cliStartMessage, to: logURL)
             await emit(.progress(0.1, message: cliStartMessage))
 
             let output = await command.run(arguments: request.cliArgs, fileManager: fileManager)
             for line in output.stdout.split(whereSeparator: \.isNewline) {
                 let message = String(line)
-                try record(event: "log", extra: ["message": message], logURL: logURL)
+                try logging.recordLog(message: message, to: logURL)
                 await emit(.log(message))
             }
 
@@ -61,14 +57,7 @@ struct CLIPhaseExecutor: AgentExecutor {
                                          bytesWritten: 0,
                                          summary: summary)
 
-            try record(event: "workerFinished",
-                       extra: ["status": result.status.rawValue,
-                               "summary": summary,
-                               "durationMs": String(Int(duration * 1000)),
-                               "exitCode": String(output.exitCode),
-                               "bytesRead": "0",
-                               "bytesWritten": "0"],
-                       logURL: logURL)
+            try logging.recordFinished(result: result, to: logURL)
             await emit(.finished(result))
         } catch is CancellationError {
             let duration = Date().timeIntervalSince(start)
@@ -78,14 +67,7 @@ struct CLIPhaseExecutor: AgentExecutor {
                                          bytesRead: 0,
                                          bytesWritten: 0,
                                          summary: "Canceled")
-            try? record(event: "workerFinished",
-                        extra: ["status": result.status.rawValue,
-                                "summary": result.summary,
-                                "durationMs": String(Int(duration * 1000)),
-                                "exitCode": "1",
-                                "bytesRead": "0",
-                                "bytesWritten": "0"],
-                        logURL: logURL)
+            try? logging.recordFinished(result: result, to: logURL)
             await emit(.finished(result))
         } catch {
             let duration = Date().timeIntervalSince(start)
@@ -95,43 +77,12 @@ struct CLIPhaseExecutor: AgentExecutor {
                                          bytesRead: 0,
                                          bytesWritten: 0,
                                          summary: error.localizedDescription)
-            try? record(event: "workerFinished",
-                        extra: ["status": result.status.rawValue,
-                                "summary": result.summary,
-                                "durationMs": String(Int(duration * 1000)),
-                                "exitCode": "1",
-                                "bytesRead": "0",
-                                "bytesWritten": "0"],
-                        logURL: logURL)
+            try? logging.recordFinished(result: result, to: logURL)
             await emit(.finished(result))
         }
     }
 
     // MARK: - Helpers
-
-    private func prepareLogDirectory(for logURL: URL) throws {
-        let directory = logURL.deletingLastPathComponent()
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-    }
-
-    private func record(event: String, extra: [String: String], logURL: URL) throws {
-        let entry = ["timestamp": dateFormatter.string(from: .now),
-                     "event": event]
-            .merging(extra) { $1 }
-        let data = try JSONSerialization.data(withJSONObject: entry)
-        try appendLine(data, to: logURL)
-    }
-
-    private func appendLine(_ data: Data, to url: URL) throws {
-        if !fileManager.fileExists(atPath: url.path) {
-            fileManager.createFile(atPath: url.path, contents: nil)
-        }
-        let handle = try FileHandle(forWritingTo: url)
-        defer { try? handle.close() }
-        try handle.seekToEnd()
-        handle.write(data)
-        handle.write(Data([0x0a]))
-    }
 
     private func appendHistoryEntry(runID: UUID, flow: String, planPath: URL) throws {
         guard fileManager.fileExists(atPath: planPath.path) else { return }

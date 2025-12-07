@@ -80,7 +80,7 @@ struct ConventionsValidator {
         var cards: [(code: String, path: String)] = []
         var parsedCards: [Card] = []
 
-        guard directoryExists(at: projectURL) else {
+        guard fileManager.directoryExists(at: projectURL) else {
             issues.append(ValidationIssue(path: relativePath(of: projectURL, from: rootURL),
                                           message: "Missing \(ProjectConventions.projectRootName) root folder.",
                                           severity: .error,
@@ -156,7 +156,7 @@ struct ConventionsValidator {
         for status in CardStatus.allCases {
             let statusURL = phaseURL.appendingPathComponent(status.folderName)
 
-            guard directoryExists(at: statusURL) else {
+            guard fileManager.directoryExists(at: statusURL) else {
                 issues.append(ValidationIssue(path: relativePath(of: statusURL, from: rootURL),
                                               message: "Missing \(status.folderName) folder under \(phaseURL.lastPathComponent).",
                                               severity: .error,
@@ -440,12 +440,6 @@ struct ConventionsValidator {
 
     private func isRegularFile(_ url: URL) -> Bool {
         (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) ?? false
-    }
-
-    private func directoryExists(at url: URL) -> Bool {
-        var isDirectory: ObjCBool = false
-        let exists = fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
-        return exists && isDirectory.boolValue
     }
 
     private func phaseDirectoryNameIsValid(_ name: String) -> Bool {

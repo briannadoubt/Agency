@@ -11,7 +11,7 @@ import Darwin
 protocol WorkerLaunching: AnyObject {
     func registerSupervisorPlistIfNeeded() throws
     func registerWorkerPlistIfNeeded() throws
-    func launch(request: CodexRunRequest) async throws -> WorkerEndpoint
+    func launch(request: WorkerRunRequest) async throws -> WorkerEndpoint
     func activeProcess(for runID: UUID) -> Process?
     func cancel(job: any JobHandle) async
 }
@@ -20,9 +20,9 @@ protocol WorkerLaunching: AnyObject {
 @MainActor
 final class WorkerLauncher: WorkerLaunching {
     private enum Constants {
-        static let supervisorPlist = "CodexSupervisor"
-        static let workerPlist = "CodexWorker"
-        static let workerBinaryName = "CodexWorker"
+        static let supervisorPlist = "AgentSupervisor"
+        static let workerPlist = "AgentWorker"
+        static let workerBinaryName = "AgentWorker"
         static let workerLabelPrefix = "dev.agency.worker"
     }
 
@@ -61,19 +61,19 @@ final class WorkerLauncher: WorkerLaunching {
         case .requiresApproval, .enabled:
             break
         case .notFound:
-            throw CodexSupervisorError.registrationMissing(name)
+            throw AgentSupervisorError.registrationMissing(name)
         @unknown default:
             logger.warning("Unhandled SMAppService status for \(name)")
         }
 #else
         logger.warning("ServiceManagement unavailable; unable to register \(name)")
-        throw CodexSupervisorError.registrationMissing(name)
+        throw AgentSupervisorError.registrationMissing(name)
 #endif
     }
 
     // MARK: Launching
 
-    func launch(request: CodexRunRequest) async throws -> WorkerEndpoint {
+    func launch(request: WorkerRunRequest) async throws -> WorkerEndpoint {
         let directories = try RunDirectories.prepare(for: request, fileManager: fileManager)
         let scopedRequest = request.updatingDirectories(logDirectory: directories.logDirectory,
                                                         outputDirectory: directories.outputDirectory)
@@ -83,7 +83,7 @@ final class WorkerLauncher: WorkerLaunching {
 
         guard let workerBinary = resolveWorkerBinary() else {
             cleanupOutputs(for: scopedRequest.runID)
-            throw CodexSupervisorError.workerBinaryMissing
+            throw AgentSupervisorError.workerBinaryMissing
         }
 
         let payloadURL: URL
@@ -112,7 +112,7 @@ final class WorkerLauncher: WorkerLaunching {
             processes[scopedRequest.runID] = process
         } catch {
             cleanupOutputs(for: scopedRequest.runID)
-            throw CodexSupervisorError.workerLaunchFailed(error.localizedDescription)
+            throw AgentSupervisorError.workerLaunchFailed(error.localizedDescription)
         }
 
         // Allow the worker to adopt the endpoint asynchronously; the app only needs the name to reconnect.
@@ -133,7 +133,7 @@ final class WorkerLauncher: WorkerLaunching {
 
     // MARK: Helpers
 
-    private func persistPayload(request: CodexRunRequest) throws -> URL {
+    private func persistPayload(request: WorkerRunRequest) throws -> URL {
         let payloadDirectory = request.logDirectory
         try fileManager.createDirectory(at: payloadDirectory,
                                         withIntermediateDirectories: true,
@@ -142,13 +142,13 @@ final class WorkerLauncher: WorkerLaunching {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
         guard let data = try? encoder.encode(request) else {
-            throw CodexSupervisorError.payloadEncodingFailed
+            throw AgentSupervisorError.payloadEncodingFailed
         }
         try data.write(to: payloadURL, options: .atomic)
         return payloadURL
     }
 
-    private func defaultEnvironment(for request: CodexRunRequest) -> [String: String] {
+    private func defaultEnvironment(for request: WorkerRunRequest) -> [String: String] {
         var environment: [String: String] = ProcessInfo.processInfo.environment
         environment["CODEX_RUN_ID"] = request.runID.uuidString
         environment["CODEX_ENDPOINT_NAME"] = bootstrapName(for: request.runID)
@@ -231,7 +231,7 @@ struct RunDirectories {
     let logDirectory: URL
     let outputDirectory: URL
 
-    static func prepare(for request: CodexRunRequest, fileManager: FileManager) throws -> RunDirectories {
+    static func prepare(for request: WorkerRunRequest, fileManager: FileManager) throws -> RunDirectories {
         let logDirectory = request.logDirectory
         try fileManager.createDirectory(at: logDirectory,
                                         withIntermediateDirectories: true,

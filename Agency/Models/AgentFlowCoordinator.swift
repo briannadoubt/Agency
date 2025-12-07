@@ -1,13 +1,6 @@
 import Foundation
 
-enum AgentRunStatus: String, Codable, Equatable {
-    case idle
-    case queued
-    case running
-    case succeeded
-    case failed
-    case canceled
-}
+// Note: AgentRunStatus is now a typealias for AgentStatus in AgentStatus.swift
 
 struct AgentRunLock: Codable, Equatable {
     let runID: UUID
@@ -89,66 +82,8 @@ struct AgentRunLogLocator {
     }
 }
 
-struct AgentBackoffPolicy {
-    let baseDelay: TimeInterval
-    let multiplier: Double
-    let jitterFraction: Double
-    let maxDelay: TimeInterval
-    let maxRetries: Int
-    let random: @Sendable () -> Double
-
-    init(baseDelay: TimeInterval = 30,
-         multiplier: Double = 2,
-         jitterFraction: Double = 0.1,
-         maxDelay: TimeInterval = 300,
-         maxRetries: Int = 5,
-         random: @escaping @Sendable () -> Double = { Double.random(in: -1...1) }) {
-        self.baseDelay = baseDelay
-        self.multiplier = multiplier
-        self.jitterFraction = jitterFraction
-        self.maxDelay = maxDelay
-        self.maxRetries = maxRetries
-        self.random = random
-    }
-
-    func delay(forFailureCount failures: Int) -> TimeInterval? {
-        guard failures > 0 else { return nil }
-        guard failures <= maxRetries else { return nil }
-
-        let scaled = baseDelay * pow(multiplier, Double(failures - 1))
-        let clamped = min(scaled, maxDelay)
-        let jitter = 1 + (jitterFraction * random())
-        return clamped * jitter
-    }
-}
-
-enum AgentRunOutcome: Equatable {
-    case succeeded
-    case failed
-    case canceled
-
-    nonisolated var status: AgentRunStatus {
-        switch self {
-        case .succeeded:
-            return .succeeded
-        case .failed:
-            return .failed
-        case .canceled:
-            return .canceled
-        }
-    }
-
-    nonisolated static func == (lhs: AgentRunOutcome, rhs: AgentRunOutcome) -> Bool {
-        switch (lhs, rhs) {
-        case (.succeeded, .succeeded),
-             (.failed, .failed),
-             (.canceled, .canceled):
-            return true
-        default:
-            return false
-        }
-    }
-}
+// Note: AgentBackoffPolicy is now a typealias for BackoffPolicy in BackoffPolicy.swift
+// Note: AgentRunOutcome is now a typealias for RunOutcome in RunOutcome.swift
 
 enum AgentFlowError: LocalizedError, Equatable {
     case cardOutsideProject
@@ -365,7 +300,7 @@ final class AgentFlowCoordinator {
     func backoffDelay(for card: Card) -> TimeInterval? {
         let cardURL = card.filePath.standardizedFileURL
         let failures = failureCounts[cardURL] ?? 0
-        return backoffPolicy.delay(forFailureCount: failures)
+        return backoffPolicy.delayInterval(forFailureCount: failures)
     }
 
     func isLocked(_ card: Card) -> Bool {

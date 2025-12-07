@@ -33,8 +33,8 @@ struct SupervisorTests {
 
     @Test func supervisorAndWorkerPlistsExist() throws {
         let resourcesRoot = try resourcesDirectory()
-        let supervisorPlist = resourcesRoot.appendingPathComponent("CodexSupervisor.plist")
-        let workerPlist = resourcesRoot.appendingPathComponent("CodexWorker.plist")
+        let supervisorPlist = resourcesRoot.appendingPathComponent("AgentSupervisor.plist")
+        let workerPlist = resourcesRoot.appendingPathComponent("AgentWorker.plist")
 
         #expect(FileManager.default.fileExists(atPath: supervisorPlist.path))
         #expect(FileManager.default.fileExists(atPath: workerPlist.path))
@@ -42,14 +42,14 @@ struct SupervisorTests {
         let supervisor = NSDictionary(contentsOf: supervisorPlist) as? [String: Any]
         let worker = NSDictionary(contentsOf: workerPlist) as? [String: Any]
 
-        #expect(supervisor?["Label"] as? String == "dev.agency.CodexSupervisor")
-        #expect(worker?["Label"] as? String == "dev.agency.CodexWorker")
+        #expect(supervisor?["Label"] as? String == "dev.agency.AgentSupervisor")
+        #expect(worker?["Label"] as? String == "dev.agency.AgentWorker")
     }
 
     @Test func entitlementsContainRequiredCapabilities() throws {
         let resourcesRoot = try resourcesDirectory()
-        let supervisor = resourcesRoot.appendingPathComponent("CodexSupervisor.entitlements")
-        let worker = resourcesRoot.appendingPathComponent("CodexWorker.entitlements")
+        let supervisor = resourcesRoot.appendingPathComponent("AgentSupervisor.entitlements")
+        let worker = resourcesRoot.appendingPathComponent("AgentWorker.entitlements")
 
         for entitlementURL in [supervisor, worker] {
             let entitlements = NSDictionary(contentsOf: entitlementURL) as? [String: Any]
@@ -63,14 +63,14 @@ struct SupervisorTests {
     @Test func supervisorEnforcesCapabilitiesBeforeRegistering() async {
         let launcher = StubWorkerLauncher()
         let checklist = CapabilityChecklist { _ in false } // everything missing
-        let supervisor = CodexSupervisor(launcher: launcher,
+        let supervisor = AgentSupervisor(launcher: launcher,
                                          backoffPolicy: WorkerBackoffPolicy(),
                                          capabilityChecklist: checklist)
 
         do {
             try supervisor.registerIfNeeded()
             #expect(false)
-        } catch let error as CodexSupervisorError {
+        } catch let error as AgentSupervisorError {
             if case .capabilitiesMissing(let missing) = error {
                 #expect(!missing.isEmpty)
             } else {
@@ -86,7 +86,7 @@ struct SupervisorTests {
 
     @Test func supervisorCachesEndpointsAndSupportsReconnectAndCancel() async throws {
         let runID = UUID()
-        let request = CodexRunRequest(runID: runID,
+        let request = WorkerRunRequest(runID: runID,
                                       flow: "test",
                                       cardRelativePath: "project/phase/card.md",
                                       projectBookmark: Data([0x01]),
@@ -98,7 +98,7 @@ struct SupervisorTests {
         let expectedEndpoint = WorkerEndpoint(runID: runID,
                                               bootstrapName: "dev.agency.worker.\(runID.uuidString)")
         let launcher = StubWorkerLauncher { _ in expectedEndpoint }
-        let supervisor = CodexSupervisor(launcher: launcher,
+        let supervisor = AgentSupervisor(launcher: launcher,
                                          backoffPolicy: WorkerBackoffPolicy(baseDelay: .seconds(1)),
                                          capabilityChecklist: CapabilityChecklist { _ in true })
 
@@ -150,7 +150,7 @@ private final class StubWorkerLauncher: WorkerLaunching {
         registerWorkerCalls += 1
     }
 
-    func launch(request: CodexRunRequest) async throws -> WorkerEndpoint {
+    func launch(request: WorkerRunRequest) async throws -> WorkerEndpoint {
         endpointForRun(request.runID)
     }
 

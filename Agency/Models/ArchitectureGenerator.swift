@@ -392,9 +392,3 @@ struct ArchitectureGenerator {
         return formatter
     }()
 }
-
-private extension String {
-    func trimmed() -> String {
-        trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-}

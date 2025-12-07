@@ -1,9 +1,9 @@
 import Foundation
 import Observation
 
-/// Contract for any backend executor (simulator, Codex XPC, CLI wrapper) to plug into the UI.
+/// Contract for any backend executor (simulator, XPC worker, CLI wrapper) to plug into the UI.
 protocol AgentExecutor {
-    func run(request: CodexRunRequest,
+    func run(request: WorkerRunRequest,
              logURL: URL,
              outputDirectory: URL,
              emit: @escaping @Sendable (WorkerLogEvent) async -> Void) async
@@ -11,7 +11,7 @@ protocol AgentExecutor {
 
 /// Default in-process simulator used by the UI and tests.
 struct SimulatedAgentExecutor: AgentExecutor {
-    func run(request: CodexRunRequest,
+    func run(request: WorkerRunRequest,
              logURL: URL,
              outputDirectory: URL,
              emit: @escaping @Sendable (WorkerLogEvent) async -> Void) async {
@@ -23,21 +23,13 @@ struct SimulatedAgentExecutor: AgentExecutor {
     }
 }
 
-enum AgentRunPhase: String {
-    case queued
-    case running
-    case succeeded
-    case failed
-    case canceled
-}
-
 /// Logical backend we use to execute an agent run. Keeps the UI flexible so different
-/// agent types (Codex, CLI tools, hosted APIs) can plug in without changing UI code.
+/// agent types (XPC workers, CLI tools, hosted APIs) can plug in without changing UI code.
 enum AgentBackendKind: String, CaseIterable, Identifiable {
-    case simulated   // in-app stub used for previews/tests
-    case codex       // XPC-based Codex workers
-    case cli         // arbitrary CLI adapter (Cursor, Copilot, Claude wrappers, etc.)
-    case claudeCode  // Claude Code CLI via XPC worker
+    case simulated        // in-app stub used for previews/tests
+    case xpc              // XPC-based agent workers
+    case phaseScaffolding // phase directory scaffolding for plan flow only
+    case claudeCode       // Claude Code CLI via XPC worker
 
     var id: String { rawValue }
 }
@@ -107,8 +99,8 @@ final class AgentRunner {
         var registry = executors
         // Provide defaults so UI works without configuration.
         registry[.simulated] = registry[.simulated] ?? SimulatedAgentExecutor()
-        registry[.codex] = registry[.codex] ?? CodexAgentExecutor()
-        registry[.cli] = registry[.cli] ?? CLIPhaseExecutor()
+        registry[.xpc] = registry[.xpc] ?? XPCAgentExecutor()
+        registry[.phaseScaffolding] = registry[.phaseScaffolding] ?? CLIPhaseExecutor()
         registry[.claudeCode] = registry[.claudeCode] ?? ClaudeCodeExecutor()
         self.executors = registry
     }
@@ -122,7 +114,8 @@ final class AgentRunner {
     func startRun(card: Card,
                  flow: AgentFlow = .implement,
                  backend: AgentBackendKind = .simulated) async -> Result<AgentRunState, AgentRunError> {
-        let selectedBackend: AgentBackendKind = (backend == .simulated && flow == .plan) ? .cli : backend
+        // No hidden backend switching - use exactly what was requested
+        let selectedBackend = backend
 
         let snapshot: CardDocumentSnapshot
         do {
@@ -248,7 +241,7 @@ final class AgentRunner {
     // MARK: - Internals
 
     private func makeWorkerTask(using executor: any AgentExecutor,
-                                request: CodexRunRequest,
+                                request: WorkerRunRequest,
                                 logURL: URL,
                                 outputDirectory: URL) -> Task<Void, Never> {
         Task { [weak self, executor] in
@@ -348,7 +341,7 @@ final class AgentRunner {
         case .succeeded: statusValue = "succeeded"
         case .failed: statusValue = "failed"
         case .canceled: statusValue = "canceled"
-        case .queued, .running: statusValue = "running"
+        case .idle, .queued, .running: statusValue = "running"
         }
 
         let history = historyEntry(for: state, phase: phase)
@@ -383,7 +376,7 @@ final class AgentRunner {
         try fileManager.createDirectory(at: base, withIntermediateDirectories: true, attributes: nil)
         let logDirectory = base.appendingPathComponent(runID.uuidString, isDirectory: true)
 
-        let request = CodexRunRequest(runID: runID,
+        let request = WorkerRunRequest(runID: runID,
                                       flow: flow.rawValue,
                                       cardRelativePath: relativeCardPath,
                                       projectBookmark: bookmark,
@@ -465,7 +458,7 @@ final class AgentRunner {
         case .canceled:
             return historyEntry("Run \(runID) canceled (\(flow))")
 
-        case .queued, .running:
+        case .idle, .queued, .running:
             return historyEntry("Run \(runID) finished (\(phase.rawValue))")
         }
     }
@@ -512,7 +505,7 @@ final class AgentRunner {
 }
 
 private struct RunPreparation {
-    let request: CodexRunRequest
+    let request: WorkerRunRequest
     let logURL: URL
     let logDirectory: URL
     let outputDirectory: URL
@@ -520,7 +513,7 @@ private struct RunPreparation {
 
 private struct RunPipeline {
     let runID: UUID
-    let request: CodexRunRequest
+    let request: WorkerRunRequest
     let logURL: URL
     let outputDirectory: URL
     let workerTask: Task<Void, Never>
@@ -533,19 +526,21 @@ private struct RunPipeline {
 }
 
 private struct SimulatedWorker {
-    let request: CodexRunRequest
+    let request: WorkerRunRequest
     let logURL: URL
     let outputDirectory: URL
     let emit: (@Sendable (WorkerLogEvent) async -> Void)?
-    private let dateFormatter = ISO8601DateFormatter()
+    private let logging = ExecutorLogging()
 
     func run() async {
         let start = Date()
         do {
-            let readyExtra = ["runID": request.runID.uuidString,
-                              "flow": request.flow,
-                              "card": request.cardRelativePath]
-            try record(event: "workerReady", extra: readyExtra)
+            try logging.prepareLogDirectory(for: logURL)
+            try logging.record(event: "workerReady",
+                               extra: ["runID": request.runID.uuidString,
+                                       "flow": request.flow,
+                                       "card": request.cardRelativePath],
+                               to: logURL)
             await emit?(.log("Worker ready for \(request.flow)"))
 
             let steps = 8
@@ -554,9 +549,7 @@ private struct SimulatedWorker {
                 try await Task.sleep(for: .milliseconds(150))
                 let progress = Double(step) / Double(steps)
                 let message = "Step \(step) of \(steps) for \(request.flow)"
-                try record(event: "progress",
-                           extra: ["percent": String(progress),
-                                   "message": message])
+                try logging.recordProgress(percent: progress, message: message, to: logURL)
                 await emit?(.progress(progress, message: message))
             }
 
@@ -567,7 +560,7 @@ private struct SimulatedWorker {
                                          bytesRead: 0,
                                          bytesWritten: 0,
                                          summary: "Completed \(request.flow) flow")
-            try recordFinished(result: result)
+            try logging.recordFinished(result: result, to: logURL)
             await emit?(.finished(result))
         } catch is CancellationError {
             let durationMs = Int(Date().timeIntervalSince(start) * 1000)
@@ -577,7 +570,7 @@ private struct SimulatedWorker {
                                          bytesRead: 0,
                                          bytesWritten: 0,
                                          summary: "Canceled")
-            try? recordFinished(result: result)
+            try? logging.recordFinished(result: result, to: logURL)
             await emit?(.finished(result))
         } catch {
             let durationMs = Int(Date().timeIntervalSince(start) * 1000)
@@ -587,43 +580,11 @@ private struct SimulatedWorker {
                                          bytesRead: 0,
                                          bytesWritten: 0,
                                          summary: error.localizedDescription)
-            try? recordFinished(result: result)
+            try? logging.recordFinished(result: result, to: logURL)
             await emit?(.finished(result))
         }
     }
 
-    private func record(event: String, extra: [String: String]) throws {
-        let logDirectory = logURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: logDirectory,
-                                                withIntermediateDirectories: true,
-                                                attributes: nil)
-        let entry = ["timestamp": dateFormatter.string(from: .now),
-                     "event": event]
-            .merging(extra) { $1 }
-        let data = try JSONSerialization.data(withJSONObject: entry)
-        try appendLine(data, to: logURL)
-    }
-
-    private func recordFinished(result: WorkerRunResult) throws {
-        try record(event: "workerFinished",
-                   extra: ["status": result.status.rawValue,
-                           "summary": result.summary,
-                           "durationMs": String(Int(result.duration * 1000)),
-                           "exitCode": String(result.exitCode),
-                           "bytesRead": String(result.bytesRead),
-                           "bytesWritten": String(result.bytesWritten)])
-    }
-
-    private func appendLine(_ data: Data, to url: URL) throws {
-        if !FileManager.default.fileExists(atPath: url.path) {
-            FileManager.default.createFile(atPath: url.path, contents: nil)
-        }
-        let handle = try FileHandle(forWritingTo: url)
-        defer { try? handle.close() }
-        try handle.seekToEnd()
-        handle.write(data)
-        handle.write(Data([0x0a]))
-    }
 }
 
 extension AgentRunner {
