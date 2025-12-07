@@ -44,12 +44,17 @@ struct ProjectLoaderTests {
                                    fileManager: .default)
 
         loader.loadProject(at: rootURL)
-        try await Task.sleep(for: .milliseconds(50))
+
+        // Wait for state to become loaded (up to 2 seconds)
+        for _ in 0..<40 {
+            if case .loaded = loader.state { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
 
         if case .loaded(let snapshot) = loader.state {
             #expect(snapshot.phases == [phaseSnapshot])
         } else {
-            Issue.record("Expected loaded state after successful scan.")
+            Issue.record("Expected loaded state after successful scan, got \(loader.state)")
         }
 
         #expect(defaults.data(forKey: "bookmark") != nil)
