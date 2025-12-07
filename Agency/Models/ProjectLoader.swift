@@ -17,7 +17,7 @@ final class ProjectLoader {
         let validationIssues: [ValidationIssue]
     }
 
-    private let bookmarkStore: ProjectBookmarkStore
+    private let bookmarkStore: ProjectBookmarkStoring
     private let validator: ConventionsValidator
     private let watcher: ProjectScannerWatching
     private let fileManager: FileManager
@@ -32,7 +32,7 @@ final class ProjectLoader {
 
     private(set) var state: State = .idle
 
-    init(bookmarkStore: ProjectBookmarkStore = ProjectBookmarkStore(),
+    init(bookmarkStore: ProjectBookmarkStoring = ProjectBookmarkStore(),
          validator: ConventionsValidator = ConventionsValidator(),
          watcher: ProjectScannerWatching = ProjectScannerWatcher(),
          fileManager: FileManager = .default,
@@ -270,7 +270,13 @@ struct SecurityScopedAccess: Equatable {
     }
 }
 
-struct ProjectBookmarkStore {
+protocol ProjectBookmarkStoring {
+    func saveBookmark(for url: URL) throws
+    func restoreBookmark() -> SecurityScopedAccess?
+    func clearBookmark()
+}
+
+struct ProjectBookmarkStore: ProjectBookmarkStoring {
     private let defaults: UserDefaults
     private let bookmarkKey: String
     private var pathKey: String { "\(bookmarkKey).path" }

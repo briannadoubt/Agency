@@ -30,15 +30,12 @@ struct ProjectLoaderTests {
     }
 
     @Test func loadsAndStoresBookmarkOnSuccess() async throws {
-        let suiteName = "ProjectLoaderTests-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-
         let (rootURL, phaseSnapshot) = try makeSampleProject()
         defer { try? FileManager.default.removeItem(at: rootURL) }
 
+        let stubStore = StubBookmarkStore()
         let watcher = StubWatcher.singleSuccess([phaseSnapshot])
-        let loader = ProjectLoader(bookmarkStore: ProjectBookmarkStore(defaults: defaults, bookmarkKey: "bookmark"),
+        let loader = ProjectLoader(bookmarkStore: stubStore,
                                    validator: ConventionsValidator(),
                                    watcher: watcher,
                                    fileManager: .default)
@@ -57,7 +54,7 @@ struct ProjectLoaderTests {
             Issue.record("Expected loaded state after successful scan, got \(loader.state)")
         }
 
-        #expect(defaults.data(forKey: "bookmark") != nil)
+        #expect(stubStore.savedURL != nil)
     }
 
     @Test func restoresBookmarkAndRescans() async throws {
@@ -141,5 +138,22 @@ private struct StubWatcher: ProjectScannerWatching {
             continuation.yield(.success(snapshots))
             continuation.finish()
         })
+    }
+}
+
+private final class StubBookmarkStore: ProjectBookmarkStoring {
+    var savedURL: URL?
+
+    func saveBookmark(for url: URL) throws {
+        savedURL = url
+    }
+
+    func restoreBookmark() -> SecurityScopedAccess? {
+        guard let url = savedURL else { return nil }
+        return SecurityScopedAccess(url: url)
+    }
+
+    func clearBookmark() {
+        savedURL = nil
     }
 }
