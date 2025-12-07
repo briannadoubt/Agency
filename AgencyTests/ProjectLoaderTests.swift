@@ -58,35 +58,42 @@ struct ProjectLoaderTests {
     }
 
     @Test func restoresBookmarkAndRescans() async throws {
-        let suiteName = "ProjectLoaderTests-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-
         let (rootURL, phaseSnapshot) = try makeSampleProject()
         defer { try? FileManager.default.removeItem(at: rootURL) }
 
+        let stubStore = StubBookmarkStore()
         let initialWatcher = StubWatcher.singleSuccess([phaseSnapshot])
-        let initialLoader = ProjectLoader(bookmarkStore: ProjectBookmarkStore(defaults: defaults, bookmarkKey: "bookmark"),
+        let initialLoader = ProjectLoader(bookmarkStore: stubStore,
                                           validator: ConventionsValidator(),
                                           watcher: initialWatcher,
                                           fileManager: .default)
 
         initialLoader.loadProject(at: rootURL)
-        try await Task.sleep(for: .milliseconds(30))
+
+        // Wait for state to become loaded
+        for _ in 0..<40 {
+            if case .loaded = initialLoader.state { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
 
         let restoreWatcher = StubWatcher.singleSuccess([phaseSnapshot])
-        let restoredLoader = ProjectLoader(bookmarkStore: ProjectBookmarkStore(defaults: defaults, bookmarkKey: "bookmark"),
+        let restoredLoader = ProjectLoader(bookmarkStore: stubStore,
                                            validator: ConventionsValidator(),
                                            watcher: restoreWatcher,
                                            fileManager: .default)
 
         restoredLoader.restoreBookmarkIfAvailable()
-        try await Task.sleep(for: .milliseconds(50))
+
+        // Wait for state to become loaded
+        for _ in 0..<40 {
+            if case .loaded = restoredLoader.state { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
 
         if case .loaded(let snapshot) = restoredLoader.state {
             #expect(snapshot.rootURL == rootURL)
         } else {
-            Issue.record("Expected bookmark restoration to trigger a scan.")
+            Issue.record("Expected bookmark restoration to trigger a scan, got \(restoredLoader.state)")
         }
     }
 
@@ -134,7 +141,7 @@ private struct StubWatcher: ProjectScannerWatching {
     }
 
     static func singleSuccess(_ snapshots: [PhaseSnapshot]) -> StubWatcher {
-        StubWatcher(stream: AsyncStream { continuation in
+        StubWatcher(stream: AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
             continuation.yield(.success(snapshots))
             continuation.finish()
         })
