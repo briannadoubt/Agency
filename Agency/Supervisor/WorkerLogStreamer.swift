@@ -1,4 +1,5 @@
 import Foundation
+import os.log
 
 enum WorkerLogEvent: Equatable {
     case log(String)
@@ -24,6 +25,8 @@ enum WorkerLogStreamError: LocalizedError {
 }
 
 struct WorkerLogStreamer {
+    private static let logger = Logger(subsystem: "dev.agency.app", category: "WorkerLogStreamer")
+
     /// Streams events as they are appended to the worker log file.
     func stream(logURL: URL) -> AsyncThrowingStream<WorkerLogEvent, Error> {
         AsyncThrowingStream { continuation in
@@ -31,7 +34,13 @@ struct WorkerLogStreamer {
                 do {
                     try await waitForFile(at: logURL)
                     let handle = try FileHandle(forReadingFrom: logURL)
-                    defer { try? handle.close() }
+                    defer {
+                        do {
+                            try handle.close()
+                        } catch {
+                            Self.logger.warning("Failed to close log file handle: \(error.localizedDescription)")
+                        }
+                    }
 
                     var buffer = Data()
                     for try await byte in handle.bytes {

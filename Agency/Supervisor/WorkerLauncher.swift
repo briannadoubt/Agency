@@ -100,10 +100,12 @@ final class WorkerLauncher: WorkerLaunching {
                              "--endpoint", endpoint.bootstrapName,
                              "--payload", payloadURL.path]
         process.environment = defaultEnvironment(for: scopedRequest)
+        let runID = scopedRequest.runID
         process.terminationHandler = { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.cleanupOutputs(for: scopedRequest.runID)
-                self?.processes[scopedRequest.runID] = nil
+            Task { @MainActor in
+                guard let self else { return }
+                self.cleanupOutputs(for: runID)
+                self.processes[runID] = nil
             }
         }
 

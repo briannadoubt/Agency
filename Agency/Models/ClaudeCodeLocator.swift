@@ -131,55 +131,49 @@ struct ProcessRunner: Sendable {
     }
 
     /// Default timeout for process execution (10 seconds).
-    static let defaultTimeout: TimeInterval = 10
+    static let defaultTimeout: Duration = .seconds(10)
 
     func run(command: String,
              arguments: [String] = [],
              environment: [String: String]? = nil,
-             timeout: TimeInterval = defaultTimeout) async -> Output {
-        await withCheckedContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: command)
-            process.arguments = arguments
+             timeout: Duration = defaultTimeout) async -> Output {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: command)
+        process.arguments = arguments
 
-            if let environment {
-                process.environment = environment
-            }
+        if let environment {
+            process.environment = environment
+        }
 
-            let stdoutPipe = Pipe()
-            let stderrPipe = Pipe()
-            process.standardOutput = stdoutPipe
-            process.standardError = stderrPipe
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
 
-            // Read data before waiting to prevent deadlock if buffer fills
-            var stdoutData = Data()
-            var stderrData = Data()
+        do {
+            try process.run()
+        } catch {
+            return Output(stdout: "", stderr: error.localizedDescription, exitCode: 1)
+        }
 
-            do {
-                try process.run()
-
-                // Set up a timeout timer to terminate the process if it hangs
-                let timeoutWorkItem = DispatchWorkItem {
-                    if process.isRunning {
-                        process.terminate()
-                    }
-                }
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timeoutWorkItem)
-
-                // Read output asynchronously to prevent buffer deadlock
-                stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-
-                process.waitUntilExit()
-                timeoutWorkItem.cancel()
-
-                let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-                let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-
-                continuation.resume(returning: Output(stdout: stdout, stderr: stderr, exitCode: process.terminationStatus))
-            } catch {
-                continuation.resume(returning: Output(stdout: "", stderr: error.localizedDescription, exitCode: 1))
+        // Use a Task to handle timeout with Swift Concurrency
+        let timeoutTask = Task {
+            try await Task.sleep(for: timeout)
+            if process.isRunning {
+                process.terminate()
             }
         }
+
+        // Read output (blocking, but process is already running)
+        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+
+        process.waitUntilExit()
+        timeoutTask.cancel()
+
+        let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
+        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+
+        return Output(stdout: stdout, stderr: stderr, exitCode: process.terminationStatus)
     }
 }

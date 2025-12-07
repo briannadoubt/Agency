@@ -29,6 +29,17 @@ struct Phase: Equatable {
         self.label = String(match.2)
         self.path = path
     }
+
+    /// Creates a Phase for preview/testing purposes without path validation.
+    static func preview(number: Int, label: String) -> Phase {
+        Phase(number: number, label: label, path: URL(fileURLWithPath: "/tmp/phase-\(number)-\(label)"))
+    }
+
+    private init(number: Int, label: String, path: URL) {
+        self.number = number
+        self.label = label
+        self.path = path
+    }
 }
 
 enum CardParsingError: Error {

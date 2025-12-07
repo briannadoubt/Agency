@@ -388,7 +388,7 @@ struct ClaudeCodeSettingsView: View {
             command: cliPath,
             arguments: ["-p", "Say 'Connection successful' and nothing else", "--max-turns", "1"],
             environment: environment,
-            timeout: 60
+            timeout: .seconds(60)
         )
 
         if output.exitCode == 0 {

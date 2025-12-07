@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os.log
 
 /// Contract for any backend executor (simulator, XPC worker, CLI wrapper) to plug into the UI.
 protocol AgentExecutor {
@@ -76,6 +77,7 @@ enum AgentRunError: LocalizedError, Equatable {
 @MainActor
 @Observable
 final class AgentRunner {
+    private static let logger = Logger(subsystem: "dev.agency.app", category: "AgentRunner")
     private let pipeline: CardEditingPipeline
     private let parser: CardFileParser
     private let fileManager: FileManager
@@ -300,12 +302,16 @@ final class AgentRunner {
         runs[runID] = state
 
         let cardURL = URL(fileURLWithPath: state.cardPath)
-        try? updateFrontmatter(at: cardURL,
-                               mutate: { draft in
-                                   draft.agentStatus = "running"
-                                   draft.agentFlow = state.flow.rawValue
-                               },
-                               history: historyEntry("Run \(state.id) started"))
+        do {
+            try updateFrontmatter(at: cardURL,
+                                  mutate: { draft in
+                                      draft.agentStatus = "running"
+                                      draft.agentFlow = state.flow.rawValue
+                                  },
+                                  history: historyEntry("Run \(state.id) started"))
+        } catch {
+            Self.logger.warning("Failed to update frontmatter for running state: \(error.localizedDescription)")
+        }
     }
 
     private func finishIfNeeded(runID: UUID) {
@@ -346,12 +352,16 @@ final class AgentRunner {
 
         let history = historyEntry(for: state, phase: phase)
 
-        try? updateFrontmatter(at: URL(fileURLWithPath: state.cardPath),
-                               mutate: { draft in
-                                   draft.agentStatus = statusValue
-                                   draft.agentFlow = state.flow.rawValue
-                               },
-                               history: history)
+        do {
+            try updateFrontmatter(at: URL(fileURLWithPath: state.cardPath),
+                                  mutate: { draft in
+                                      draft.agentStatus = statusValue
+                                      draft.agentFlow = state.flow.rawValue
+                                  },
+                                  history: history)
+        } catch {
+            Self.logger.warning("Failed to update frontmatter for \(statusValue) state: \(error.localizedDescription)")
+        }
 
         if phase == .succeeded {
             Task { [projectLoader] in

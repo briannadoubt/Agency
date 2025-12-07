@@ -232,7 +232,12 @@ struct ClaudeCodeExecutor: AgentExecutor {
             }
         }
 
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            streamTask.cancel()
+            throw error
+        }
 
         // Wait for process with cancellation support
         await withTaskCancellationHandler {

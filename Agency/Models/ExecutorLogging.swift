@@ -1,8 +1,10 @@
 import Foundation
+import os.log
 
 /// Shared logging utilities used by all executor implementations.
 /// Consolidates duplicated code for log directory preparation, event recording, and line appending.
 struct ExecutorLogging {
+    private static let logger = Logger(subsystem: "dev.agency.app", category: "ExecutorLogging")
     private let fileManager: FileManager
     private let dateFormatter: ISO8601DateFormatter
 
@@ -35,7 +37,13 @@ struct ExecutorLogging {
             fileManager.createFile(atPath: url.path, contents: nil)
         }
         let handle = try FileHandle(forWritingTo: url)
-        defer { try? handle.close() }
+        defer {
+            do {
+                try handle.close()
+            } catch {
+                Self.logger.warning("Failed to close log file handle: \(error.localizedDescription)")
+            }
+        }
         try handle.seekToEnd()
         handle.write(data)
         handle.write(Data([0x0a]))

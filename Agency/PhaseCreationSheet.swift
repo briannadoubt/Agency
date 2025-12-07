@@ -282,7 +282,7 @@ struct PhaseCreationSheet_Previews: PreviewProvider {
                                                                startedAt: .now,
                                                                finishedAt: nil)
 
-        let phase = try! Phase(path: URL(fileURLWithPath: "/tmp/project/phase-1-preview"))
+        let phase = Phase.preview(number: 1, label: "preview")
         let snapshot = ProjectLoader.ProjectSnapshot(rootURL: URL(fileURLWithPath: "/tmp"),
                                                      phases: [PhaseSnapshot(phase: phase, cards: [])],
                                                      validationIssues: [])

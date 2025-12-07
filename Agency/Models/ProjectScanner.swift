@@ -200,7 +200,7 @@ private final class ProjectScanScheduler {
 
     private func attachChangeStream() {
         let stream = FileSystemChangeStream(rootURL: rootURL, debounce: debounce) { [weak self] in
-            Task { @MainActor [weak self] in
+            Task { @MainActor in
                 self?.scheduleScan()
             }
         }
