@@ -1,4 +1,5 @@
 import Foundation
+import os.log
 
 /// The type of CLI backend to use for a worker run.
 public enum WorkerBackend: String, Codable, Sendable {
@@ -105,6 +106,8 @@ public enum AgentSupervisorError: Error, Equatable, LocalizedError {
 }
 
 extension WorkerRunRequest {
+    private static let logger = Logger(subsystem: "dev.agency.app", category: "WorkerRunRequest")
+
     func updatingDirectories(logDirectory: URL, outputDirectory: URL) -> WorkerRunRequest {
         WorkerRunRequest(runID: runID,
                         flow: flow,
@@ -124,11 +127,18 @@ extension WorkerRunRequest {
     ///   on the returned URL when done. Use a `defer` block to ensure cleanup.
     var resolvedProjectRoot: URL? {
         var isStale = false
-        guard let url = try? URL(resolvingBookmarkData: projectBookmark,
-                                  options: [.withSecurityScope],
-                                  relativeTo: nil,
-                                  bookmarkDataIsStale: &isStale) else {
+        let url: URL
+        do {
+            url = try URL(resolvingBookmarkData: projectBookmark,
+                          options: [.withSecurityScope],
+                          relativeTo: nil,
+                          bookmarkDataIsStale: &isStale)
+        } catch {
+            Self.logger.warning("Failed to resolve project bookmark for run \(runID): \(error.localizedDescription)")
             return nil
+        }
+        if isStale {
+            Self.logger.info("Project bookmark is stale for run \(runID); may need refresh")
         }
         // Start accessing security-scoped resource
         _ = url.startAccessingSecurityScopedResource()

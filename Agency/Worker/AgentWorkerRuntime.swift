@@ -88,27 +88,9 @@ struct AgentWorkerRuntime {
     // MARK: - Backend Implementations
 
     private func runXPCBackend(project: WorkerSandbox.ScopedProject, start: Date) async throws {
-        // Placeholder for XPC backend integration
-        // For now, simulate progress steps
-        let steps = 6
-        for step in 1...steps {
-            try Task.checkCancellation()
-            try await Task.sleep(for: .milliseconds(25))
-            let progress = Double(step) / Double(steps)
-            try record(event: "progress",
-                       extra: ["percent": String(progress),
-                               "message": "Agent step \(step)/\(steps)"])
-        }
-
-        let durationMs = Int(Date().timeIntervalSince(start) * 1000)
-        try record(event: "workerFinished",
-                   extra: ["status": WorkerRunResult.Status.succeeded.rawValue,
-                           "card": payload.cardRelativePath,
-                           "summary": "Completed \(payload.flow) flow via agent",
-                           "durationMs": String(durationMs),
-                           "exitCode": "0",
-                           "bytesRead": "0",
-                           "bytesWritten": "0"])
+        // XPC backend runs Claude Code CLI inside the sandboxed worker process
+        // This provides isolation while using the same underlying CLI
+        try await runClaudeCode(project: project, start: start)
     }
 
     private func runClaudeCode(project: WorkerSandbox.ScopedProject, start: Date) async throws {
@@ -292,10 +274,10 @@ enum AgentWorkerBootstrap {
     static func runtimeFromEnvironment(arguments: [String]) -> AgentWorkerRuntime? {
         let env = ProcessInfo.processInfo.environment
         guard
-            let runIDString = env["CODEX_RUN_ID"],
+            let runIDString = env["AGENT_RUN_ID"],
             let runID = UUID(uuidString: runIDString),
-            let endpointName = env["CODEX_ENDPOINT_NAME"],
-            let logPath = env["CODEX_LOG_DIRECTORY"]
+            let endpointName = env["AGENT_ENDPOINT_NAME"],
+            let logPath = env["AGENT_LOG_DIRECTORY"]
         else { return nil }
 
         let payload: WorkerRunRequest
@@ -307,8 +289,8 @@ enum AgentWorkerBootstrap {
             payload = placeholderPayload(runID: runID)
         }
 
-        let bookmarkOverride = env["CODEX_PROJECT_BOOKMARK_BASE64"].flatMap { Data(base64Encoded: $0) }
-        let outputDirectory = env["CODEX_OUTPUT_DIRECTORY"].map { URL(fileURLWithPath: $0) } ?? payload.outputDirectory
+        let bookmarkOverride = env["AGENT_PROJECT_BOOKMARK_BASE64"].flatMap { Data(base64Encoded: $0) }
+        let outputDirectory = env["AGENT_OUTPUT_DIRECTORY"].map { URL(fileURLWithPath: $0) } ?? payload.outputDirectory
         let resolvedPayload = WorkerRunRequest(runID: payload.runID,
                                               flow: payload.flow,
                                               cardRelativePath: payload.cardRelativePath,
@@ -319,7 +301,7 @@ enum AgentWorkerBootstrap {
                                               cliArgs: payload.cliArgs,
                                               backend: payload.backend)
 
-        let allowNetwork = env["CODEX_ALLOW_NETWORK"] == "1"
+        let allowNetwork = env["AGENT_ALLOW_NETWORK"] == "1"
         return AgentWorkerRuntime(payload: resolvedPayload,
                                   endpointName: endpointName,
                                   logDirectory: URL(fileURLWithPath: logPath),

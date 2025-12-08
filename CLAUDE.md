@@ -24,20 +24,62 @@ open Agency.xcodeproj
 ### Directory Structure
 - `Agency/` - Main app source (SwiftUI views, models)
 - `Agency/Models/` - Core domain: Card parsing, ProjectLoader, AgentRunner, validators, generators
-- `Agency/Supervisor/` - XPC supervisor/worker orchestration for agent runs
-- `Agency/Worker/` - Sandboxed worker runtime for Codex agents
+- `Agency/Models/CLIProviders/` - CLI provider abstraction (AgentCLIProvider, ProviderRegistry, GenericCLIExecutor)
+- `Agency/Models/Prompts/` - Prompt template system (PromptBuilder, PromptContext, AgentRole, DefaultPromptTemplates)
+- `Agency/Supervisor/` - Background orchestration (SupervisorCoordinator, AgentScheduler, FlowPipelineOrchestrator, BacklogWatcher)
+- `Agency/Worker/` - Sandboxed worker runtime for agent execution
 - `Agency/Conventions/` - Project validation (RoadmapValidator, ArchitectureValidator, ConventionsValidator)
 - `AgencyTests/` - Unit tests (Swift Testing with `#expect`)
 - `AgencyUITests/` - UI tests
 - `project/` - Kanban phases with Markdown task cards
 
 ### Key Components
+
+**Core Domain:**
 - **Card**: Markdown file with YAML frontmatter and sections (Summary, Acceptance Criteria, Notes, History)
 - **CardStatus**: `backlog`, `in-progress`, `done` (determined by parent folder)
 - **Phase**: Directory `project/phase-N-label/` grouping related cards
 - **ProjectLoader**: Scans project folder, watches for changes, provides `ProjectSnapshot`
-- **AgentRunner**: Orchestrates agent runs with pluggable backends (simulated, codex, cli)
+
+**Agent System:**
+- **AgentSupervisor**: Singleton exposing supervisor API, wraps SupervisorCoordinator
+- **SupervisorCoordinator**: Top-level orchestration with NSBackgroundActivityScheduler
+- **AgentScheduler**: Queue management, concurrency control, card locking, backoff/retry
+- **AgentFlowCoordinator**: Card lifecycle updates, frontmatter/history management
+- **FlowPipelineOrchestrator**: Multi-step flow sequencing (research → plan → implement → review)
+- **BacklogWatcher**: FSEvents monitoring of backlog folders for automatic processing
+
+**CLI Provider Layer:**
+- **AgentCLIProvider**: Protocol for CLI tools (locator, streamParser, buildArguments)
+- **ProviderRegistry**: Discovery, registration, and selection of CLI providers
+- **GenericCLIExecutor**: Runs any registered provider with streaming output
+- **ClaudeCodeProvider**: Claude Code CLI implementation
+
+**Prompt System:**
+- **PromptBuilder**: Template loading with project → app → built-in fallback chain
+- **PromptContext**: Variables for card, flow, project context
+- **AgentRole**: Implementer, Reviewer, Researcher, Architect, Supervisor
+- **DefaultPromptTemplates**: Built-in templates for all roles and flows
+
+**Execution:**
+- **AgentRunner**: UI-facing run orchestration with pluggable backends
 - **PhaseCreator**: CLI-driven phase scaffolding with plan artifacts
+
+### Agent Flows & Pipelines
+
+| Flow | Role | Description |
+|------|------|-------------|
+| `implement` | Implementer | Execute acceptance criteria, write code, run tests |
+| `review` | Reviewer | Analyze changes, provide feedback, identify issues |
+| `research` | Researcher | Gather info, document findings, explore codebase |
+| `plan` | Architect | Design solutions, break down tasks, create plans |
+
+| Pipeline | Flows |
+|----------|-------|
+| `implement-only` | implement |
+| `implement-review` | implement → review |
+| `research-implement` | research → implement |
+| `full` | research → plan → implement → review |
 
 ### Card Filename Convention
 `<phase>.<task>-slug.md` (e.g., `1.3-input-routing.md`)

@@ -83,21 +83,27 @@ final class AgentRunner {
     private let fileManager: FileManager
     private var projectLoader: ProjectLoader?
     private var executors: [AgentBackendKind: any AgentExecutor]
+    private let providerRegistry: ProviderRegistry
 
     private var locks: Set<String> = []
     private var runs: [UUID: AgentRunState] = [:]
     private var runByCard: [String: UUID] = [:]
     private var pipelines: [UUID: RunPipeline] = [:]
 
+    /// Whether to use provider-based executors (GenericCLIExecutor) when available.
+    var useProviderBasedExecutors: Bool = true
+
     init(pipeline: CardEditingPipeline = .shared,
          parser: CardFileParser = CardFileParser(),
          fileManager: FileManager = .default,
          projectLoader: ProjectLoader? = nil,
+         providerRegistry: ProviderRegistry = .shared,
          executors: [AgentBackendKind: any AgentExecutor] = [:]) {
         self.pipeline = pipeline
         self.parser = parser
         self.fileManager = fileManager
         self.projectLoader = projectLoader
+        self.providerRegistry = providerRegistry
         var registry = executors
         // Provide defaults so UI works without configuration.
         registry[.simulated] = registry[.simulated] ?? SimulatedAgentExecutor()
@@ -105,6 +111,43 @@ final class AgentRunner {
         registry[.phaseScaffolding] = registry[.phaseScaffolding] ?? CLIPhaseExecutor()
         registry[.claudeCode] = registry[.claudeCode] ?? ClaudeCodeExecutor()
         self.executors = registry
+    }
+
+    // MARK: - Provider Integration
+
+    /// Returns an executor for a registered provider, creating a GenericCLIExecutor.
+    /// - Parameter identifier: The provider identifier (e.g., "claude-code").
+    /// - Returns: An AgentExecutor if the provider is registered, nil otherwise.
+    func executor(for providerIdentifier: String) -> (any AgentExecutor)? {
+        guard let provider = providerRegistry.provider(for: providerIdentifier) else {
+            return nil
+        }
+        return GenericCLIExecutor(provider: provider)
+    }
+
+    /// Checks availability of all registered providers.
+    /// - Returns: Dictionary of provider identifiers to their availability status.
+    func checkProviderAvailability() async -> [String: ProviderAvailability] {
+        await providerRegistry.checkAvailability()
+    }
+
+    /// Returns the default provider for a given flow.
+    func defaultProvider(for flow: AgentFlow) -> (any AgentCLIProvider)? {
+        providerRegistry.defaultProvider(for: flow)
+    }
+
+    /// Resolves the executor for a backend, optionally preferring provider-based executors.
+    private func resolveExecutor(for backend: AgentBackendKind, flow: AgentFlow) -> (any AgentExecutor)? {
+        // For Claude Code backend, optionally use provider-based executor
+        if backend == .claudeCode && useProviderBasedExecutors {
+            if let providerExecutor = executor(for: "claude-code") {
+                Self.logger.debug("Using provider-based executor for Claude Code")
+                return providerExecutor
+            }
+        }
+
+        // Fall back to registered executor
+        return executors[backend]
     }
 
     func state(for card: Card) -> AgentRunState? {
@@ -141,7 +184,7 @@ final class AgentRunner {
         let runID = UUID()
         locks.insert(path)
 
-        guard let executor = executors[selectedBackend] else {
+        guard let executor = resolveExecutor(for: selectedBackend, flow: flow) else {
             locks.remove(path)
             return .failure(.backendMissing(selectedBackend))
         }

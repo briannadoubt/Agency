@@ -61,15 +61,10 @@ struct AgentRunLogLocator {
     }
 
     func makePaths(for runID: UUID, on date: Date) throws -> AgentRunLogPaths {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .iso8601)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyyMMdd"
-
         let directory = baseDirectory
             .appendingPathComponent("Logs", isDirectory: true)
             .appendingPathComponent("Agents", isDirectory: true)
-            .appendingPathComponent(formatter.string(from: date), isDirectory: true)
+            .appendingPathComponent(DateFormatters.compactDateString(from: date), isDirectory: true)
             .appendingPathComponent(runID.uuidString, isDirectory: true)
 
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -443,11 +438,7 @@ final class AgentFlowCoordinator {
     }
 
     private func formattedDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .iso8601)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
+        DateFormatters.dateString(from: date)
     }
 
     private func cardRelativePath(of cardURL: URL, from rootURL: URL) -> String {

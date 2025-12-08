@@ -133,11 +133,7 @@ final class CardClaimer {
     }
 
     private func claimHistoryEntry(owner: String?) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .iso8601)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        let today = formatter.string(from: dateProvider())
+        let today = DateFormatters.dateString(from: dateProvider())
 
         if let owner {
             return "\(today) - Claimed by \(owner); moved to In Progress."

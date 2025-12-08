@@ -1,4 +1,5 @@
 import Foundation
+import os.log
 
 struct RoadmapTaskEntry: Codable, Equatable {
     let code: String
@@ -62,6 +63,8 @@ struct RoadmapParseResult {
 }
 
 struct RoadmapParser {
+    private static let logger = Logger(subsystem: "dev.agency.app", category: "RoadmapParser")
+
     func parse(contents: String) -> RoadmapParseResult {
         let (frontmatter, body) = splitFrontmatter(from: contents)
         let sections = sections(from: body)
@@ -77,7 +80,12 @@ struct RoadmapParser {
     private func extractDocument(from section: String?) -> RoadmapDocument? {
         guard let jsonBlock = extractJSON(from: section ?? "") else { return nil }
         let decoder = JSONDecoder()
-        return try? decoder.decode(RoadmapDocument.self, from: Data(jsonBlock.utf8))
+        do {
+            return try decoder.decode(RoadmapDocument.self, from: Data(jsonBlock.utf8))
+        } catch {
+            Self.logger.warning("Failed to decode RoadmapDocument from JSON: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     private func extractJSON(from section: String) -> String? {
@@ -268,7 +276,7 @@ struct RoadmapGenerator {
             .map { parser.parse(contents: $0) }
 
         let phases = snapshots.map(makePhaseEntry)
-        let today = Self.dateFormatter.string(from: dateProvider())
+        let today = DateFormatters.dateString(from: dateProvider())
         let document = RoadmapDocument(version: existing?.document?.version ?? 1,
                                        projectGoal: goal,
                                        generatedAt: today,
@@ -328,13 +336,4 @@ struct RoadmapGenerator {
         }
         return existing + [newEntry]
     }
-
-    private static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .iso8601)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter
-    }()
 }

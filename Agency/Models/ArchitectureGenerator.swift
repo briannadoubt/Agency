@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import os.log
 
 /// User-supplied inputs that tailor the generated architecture.
 struct ArchitectureInput: Equatable {
@@ -91,6 +92,8 @@ struct ArchitectureParseResult {
 }
 
 struct ArchitectureParser {
+    private static let logger = Logger(subsystem: "dev.agency.app", category: "ArchitectureParser")
+
     func parse(contents: String) -> ArchitectureParseResult {
         let (frontmatter, body) = splitFrontmatter(from: contents)
         let sections = sections(from: body)
@@ -108,7 +111,12 @@ struct ArchitectureParser {
     private func extractDocument(from section: String?) -> ArchitectureDocument? {
         guard let jsonBlock = extractJSON(from: section ?? "") else { return nil }
         let decoder = JSONDecoder()
-        return try? decoder.decode(ArchitectureDocument.self, from: Data(jsonBlock.utf8))
+        do {
+            return try decoder.decode(ArchitectureDocument.self, from: Data(jsonBlock.utf8))
+        } catch {
+            Self.logger.warning("Failed to decode ArchitectureDocument from JSON: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     private func extractJSON(from section: String) -> String? {
@@ -317,7 +325,7 @@ struct ArchitectureGenerator {
             .map { parser.parse(contents: $0) }
 
         let fingerprint = Self.fingerprint(for: roadmap)
-        let today = Self.dateFormatter.string(from: dateProvider())
+        let today = DateFormatters.dateString(from: dateProvider())
         let document = ArchitectureDocument(version: existing?.document?.version ?? 1,
                                             generatedAt: today,
                                             projectGoal: roadmap.projectGoal,
@@ -382,13 +390,4 @@ struct ArchitectureGenerator {
     private func relativePath(of url: URL, from root: URL) -> String {
         url.path.replacingOccurrences(of: root.path + "/", with: "")
     }
-
-    private static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .iso8601)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter
-    }()
 }

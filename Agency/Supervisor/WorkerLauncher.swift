@@ -152,13 +152,13 @@ final class WorkerLauncher: WorkerLaunching {
 
     private func defaultEnvironment(for request: WorkerRunRequest) -> [String: String] {
         var environment: [String: String] = ProcessInfo.processInfo.environment
-        environment["CODEX_RUN_ID"] = request.runID.uuidString
-        environment["CODEX_ENDPOINT_NAME"] = bootstrapName(for: request.runID)
-        environment["CODEX_LOG_DIRECTORY"] = request.logDirectory.path
-        environment["CODEX_OUTPUT_DIRECTORY"] = request.outputDirectory.path
-        environment["CODEX_ALLOW_NETWORK"] = request.allowNetwork ? "1" : "0"
-        environment["CODEX_PROJECT_BOOKMARK_BASE64"] = request.projectBookmark.base64EncodedString()
-        environment["CODEX_CLI_ARGS"] = request.cliArgs.joined(separator: " ")
+        environment["AGENT_RUN_ID"] = request.runID.uuidString
+        environment["AGENT_ENDPOINT_NAME"] = bootstrapName(for: request.runID)
+        environment["AGENT_LOG_DIRECTORY"] = request.logDirectory.path
+        environment["AGENT_OUTPUT_DIRECTORY"] = request.outputDirectory.path
+        environment["AGENT_ALLOW_NETWORK"] = request.allowNetwork ? "1" : "0"
+        environment["AGENT_PROJECT_BOOKMARK_BASE64"] = request.projectBookmark.base64EncodedString()
+        environment["AGENT_CLI_ARGS"] = request.cliArgs.joined(separator: " ")
         environment["TMPDIR"] = request.outputDirectory.path
         return environment
     }

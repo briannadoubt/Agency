@@ -1,9 +1,11 @@
 import Foundation
 import Observation
+import os.log
 
 @MainActor
 @Observable
 final class PhaseCreationController {
+    private static let logger = Logger(subsystem: "dev.agency.app", category: "PhaseCreationController")
     struct Form {
         var label: String = ""
         var taskHints: String = ""
@@ -271,9 +273,15 @@ final class PhaseCreationController {
     private func locatePlanArtifact(projectRoot: URL, label: String) -> URL? {
         let projectURL = projectRoot.appendingPathComponent(ProjectConventions.projectRootName, isDirectory: true)
         let targetSlug = slug(from: label)
-        guard let contents = try? fileManager.contentsOfDirectory(at: projectURL,
-                                                                  includingPropertiesForKeys: [.isDirectoryKey],
-                                                                  options: [.skipsHiddenFiles]) else { return nil }
+        let contents: [URL]
+        do {
+            contents = try fileManager.contentsOfDirectory(at: projectURL,
+                                                           includingPropertiesForKeys: [.isDirectoryKey],
+                                                           options: [.skipsHiddenFiles])
+        } catch {
+            Self.logger.warning("Failed to list project directory at \(projectURL.path): \(error.localizedDescription)")
+            return nil
+        }
 
         let candidates = contents.compactMap { url -> (Phase, URL)? in
             guard let phase = try? Phase(path: url), url.lastPathComponent.hasSuffix(targetSlug) else { return nil }
@@ -305,14 +313,22 @@ final class PhaseCreationController {
 
     private func cleanupRunArtifacts(at logDirectory: URL, phase: AgentRunPhase) {
         let outputDirectory = logDirectory.appendingPathComponent("tmp", isDirectory: true)
-        try? fileManager.removeItem(at: outputDirectory)
+        do {
+            try fileManager.removeItem(at: outputDirectory)
+        } catch {
+            Self.logger.debug("Failed to remove output directory at \(outputDirectory.path): \(error.localizedDescription)")
+        }
 
         let keepLogs = (phase == .failed)
         if keepLogs {
             appendLog("Cleanup complete; logs retained at \(logDirectory.path)")
         } else {
             appendLog("Cleanup complete; removing run logs at \(logDirectory.lastPathComponent)")
-            try? fileManager.removeItem(at: logDirectory)
+            do {
+                try fileManager.removeItem(at: logDirectory)
+            } catch {
+                Self.logger.warning("Failed to remove log directory at \(logDirectory.path): \(error.localizedDescription)")
+            }
         }
     }
 

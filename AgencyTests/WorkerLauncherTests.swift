@@ -30,8 +30,8 @@ struct WorkerLauncherTests {
         #expect(endpoint.runID == request.runID)
         #expect(endpoint.bootstrapName.contains(request.runID.uuidString))
         #expect(process?.arguments?.contains("--endpoint") == true)
-        #expect(process?.environment?["CODEX_RUN_ID"] == request.runID.uuidString)
-        #expect(process?.environment?["CODEX_OUTPUT_DIRECTORY"]?.hasSuffix("/tmp") == true)
+        #expect(process?.environment?["AGENT_RUN_ID"] == request.runID.uuidString)
+        #expect(process?.environment?["AGENT_OUTPUT_DIRECTORY"]?.hasSuffix("/tmp") == true)
 
         let payloadURL = logDirectory.appendingPathComponent("worker.payload.json")
         let payloadData = try Data(contentsOf: payloadURL)

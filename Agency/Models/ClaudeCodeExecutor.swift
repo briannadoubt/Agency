@@ -1,20 +1,25 @@
 import Foundation
+import os.log
 
 /// Executor that runs Claude Code CLI directly for card implementation tasks.
 struct ClaudeCodeExecutor: AgentExecutor {
+    private static let logger = Logger(subsystem: "dev.agency.app", category: "ClaudeCodeExecutor")
     private let locator: ClaudeCodeLocator
     private let fileManager: FileManager
     private let streamParser: ClaudeStreamParser
     private let logging: ExecutorLogging
+    private let usePromptBuilder: Bool
 
     init(locator: ClaudeCodeLocator = ClaudeCodeLocator(),
          fileManager: FileManager = .default,
          streamParser: ClaudeStreamParser = ClaudeStreamParser(),
-         logging: ExecutorLogging = ExecutorLogging()) {
+         logging: ExecutorLogging = ExecutorLogging(),
+         usePromptBuilder: Bool = true) {
         self.locator = locator
         self.fileManager = fileManager
         self.streamParser = streamParser
         self.logging = logging
+        self.usePromptBuilder = usePromptBuilder
     }
 
     func run(request: WorkerRunRequest,
@@ -37,7 +42,12 @@ struct ClaudeCodeExecutor: AgentExecutor {
             // Validate prerequisites
             let cliPath = try await resolveCLIPath()
             let environment = try resolveEnvironment()
-            let prompt = buildPrompt(from: request)
+            let prompt: String
+            if usePromptBuilder, let projectRoot = workingDirectory {
+                prompt = try await buildPromptWithBuilder(from: request, projectRoot: projectRoot)
+            } else {
+                prompt = buildPromptLegacy(from: request)
+            }
 
             await emit(.progress(0.1, message: "Launching Claude Code CLI..."))
 
@@ -72,7 +82,11 @@ struct ClaudeCodeExecutor: AgentExecutor {
                                          bytesRead: 0,
                                          bytesWritten: 0,
                                          summary: "Canceled")
-            try? logging.recordFinished(result: result, to: logURL)
+            do {
+                try logging.recordFinished(result: result, to: logURL)
+            } catch {
+                Self.logger.warning("Failed to record cancellation to log file: \(error.localizedDescription)")
+            }
             await emit(.finished(result))
         } catch {
             let duration = Date().timeIntervalSince(start)
@@ -82,7 +96,11 @@ struct ClaudeCodeExecutor: AgentExecutor {
                                          bytesRead: 0,
                                          bytesWritten: 0,
                                          summary: error.localizedDescription)
-            try? logging.recordFinished(result: result, to: logURL)
+            do {
+                try logging.recordFinished(result: result, to: logURL)
+            } catch let loggingError {
+                Self.logger.warning("Failed to record failure to log file: \(loggingError.localizedDescription)")
+            }
             await emit(.finished(result))
         }
     }
@@ -130,7 +148,12 @@ struct ClaudeCodeExecutor: AgentExecutor {
         return env
     }
 
-    private func buildPrompt(from request: WorkerRunRequest) -> String {
+    private func buildPromptWithBuilder(from request: WorkerRunRequest, projectRoot: URL) async throws -> String {
+        let promptBuilder = await MainActor.run { PromptBuilder() }
+        return try await promptBuilder.build(from: request, projectRoot: projectRoot)
+    }
+
+    private func buildPromptLegacy(from request: WorkerRunRequest) -> String {
         // Build a prompt that instructs Claude to work on the card
         var prompt = """
         You are working on a task card at: \(request.cardRelativePath)
@@ -211,7 +234,11 @@ struct ClaudeCodeExecutor: AgentExecutor {
                                 let progress = min(0.1 + Double(messageCount) * 0.05, 0.9)
                                 await emit(.progress(progress, message: nil))
                             }
-                            try? logging.recordLog(message: String(line.prefix(500)), to: logURL)
+                            do {
+                                try logging.recordLog(message: String(line.prefix(500)), to: logURL)
+                            } catch {
+                                // Log recording failure is non-fatal; continue processing stream
+                            }
                         }
                         lineBuffer.removeAll(keepingCapacity: true)
                     } else {

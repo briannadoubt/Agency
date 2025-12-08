@@ -276,11 +276,7 @@ struct RoadmapTaskMaterializer {
         lines.append("Notes:")
         lines.append("")
         lines.append("History:")
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .iso8601)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        let today = formatter.string(from: dateProvider())
+        let today = DateFormatters.dateString(from: dateProvider())
         lines.append("- \(today): Card materialized from ROADMAP.md")
         lines.append("")
         return lines.joined(separator: "\n")

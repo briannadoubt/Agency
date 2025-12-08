@@ -89,11 +89,7 @@ struct CLIPhaseExecutor: AgentExecutor {
         let contents = try String(contentsOf: planPath, encoding: .utf8)
         var lines = contents.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .iso8601)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        let today = formatter.string(from: Date())
+        let today = DateFormatters.dateString(from: Date())
         let entry = "- \(today): Run \(runID.uuidString) finished (\(flow))"
 
         if let historyIndex = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare("History:") == .orderedSame }) {

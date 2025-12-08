@@ -44,11 +44,7 @@ final class BranchHelper {
     }
 
     static func historyEntry(branch: String, date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .iso8601)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        return "\(formatter.string(from: date)) - Branch set to \(branch)."
+        "\(DateFormatters.dateString(from: date)) - Branch set to \(branch)."
     }
 
     static func normalizeSlug(_ slug: String) -> String {

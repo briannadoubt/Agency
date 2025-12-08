@@ -1,4 +1,5 @@
 import Foundation
+import os.log
 
 enum CardMoveError: LocalizedError, Equatable {
     case snapshotUnavailable
@@ -26,6 +27,7 @@ enum CardMoveError: LocalizedError, Equatable {
 /// Moves cards between status folders, ensuring the operation either completes or restores the source.
 @MainActor
 final class CardMover {
+    private static let logger = Logger(subsystem: "dev.agency.app", category: "CardMover")
     private let fileManager: FileManager
     private let dateProvider: () -> Date
 
@@ -76,6 +78,7 @@ final class CardMover {
                                            to: newStatus)
                 } catch {
                     // History logging is non-fatal; move already succeeded.
+                    Self.logger.debug("Failed to append history entry after move: \(error.localizedDescription)")
                 }
             }
         } catch {
@@ -84,7 +87,11 @@ final class CardMover {
     }
 
     private func moveWithStaging(from sourceURL: URL, stagingURL: URL, destinationURL: URL) throws {
-        try? fileManager.removeItem(at: stagingURL)
+        do {
+            try fileManager.removeItem(at: stagingURL)
+        } catch {
+            // Staging file cleanup is expected to fail if it doesn't exist
+        }
         try fileManager.moveItem(at: sourceURL, to: stagingURL)
 
         do {
@@ -93,7 +100,11 @@ final class CardMover {
             }
             try fileManager.moveItem(at: stagingURL, to: destinationURL)
         } catch {
-            try? fileManager.moveItem(at: stagingURL, to: sourceURL)
+            do {
+                try fileManager.moveItem(at: stagingURL, to: sourceURL)
+            } catch let rollbackError {
+                Self.logger.error("CRITICAL: Failed to rollback card move from \(stagingURL.path) to \(sourceURL.path): \(rollbackError.localizedDescription)")
+            }
             throw error
         }
     }

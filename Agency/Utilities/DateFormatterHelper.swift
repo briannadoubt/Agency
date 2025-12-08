@@ -31,4 +31,9 @@ enum DateFormatters {
     nonisolated static func dateString(from date: Date) -> String {
         iso8601Date.string(from: date)
     }
+
+    /// Returns a compact date string for the given date (yyyyMMdd), useful for directory names.
+    nonisolated static func compactDateString(from date: Date) -> String {
+        iso8601DateCompact.string(from: date)
+    }
 }
