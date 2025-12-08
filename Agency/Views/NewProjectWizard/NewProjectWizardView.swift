@@ -153,35 +153,22 @@ struct NewProjectWizardView: View {
     // MARK: - Actions
 
     private func generateRoadmap() async {
-        // TODO: Integrate with RoadmapGenerator in 11.3
-        // For now, simulate generation
-        try? await Task.sleep(for: .seconds(2))
+        let generator = WizardAIGenerator()
 
-        await MainActor.run {
-            state.roadmapContent = """
-            # Project: \(state.projectName)
-            Owner: system
-            Status: planning
+        do {
+            let roadmap = try await generator.generateRoadmap(
+                projectName: state.projectName,
+                goal: state.projectGoal
+            )
 
-            # Overview
-            \(state.projectGoal)
-
-            # Phase 1: Foundation & Setup
-            - [ ] Initialize repository and project structure
-            - [ ] Configure build tools and linting
-            - [ ] Set up core architecture
-
-            # Phase 2: Core Features
-            - [ ] Implement primary functionality
-            - [ ] Create main user interface
-            - [ ] Develop data models and storage
-
-            # Phase 3: Polish & Launch
-            - [ ] Add error handling and edge cases
-            - [ ] Write documentation
-            - [ ] Prepare for release
-            """
-            state.currentStep = .reviewRoadmap
+            await MainActor.run {
+                state.roadmapContent = roadmap
+                state.currentStep = .reviewRoadmap
+            }
+        } catch {
+            await MainActor.run {
+                state.roadmapError = error.localizedDescription
+            }
         }
     }
 
@@ -190,40 +177,22 @@ struct NewProjectWizardView: View {
     }
 
     private func generateArchitecture() async {
-        // TODO: Integrate with ArchitectureGenerator in 11.4
-        // For now, simulate generation
-        try? await Task.sleep(for: .seconds(2))
+        let generator = WizardAIGenerator()
 
-        await MainActor.run {
-            state.architectureContent = """
-            # Architecture: \(state.projectName)
+        do {
+            let architecture = try await generator.generateArchitecture(
+                projectName: state.projectName,
+                roadmap: state.roadmapContent
+            )
 
-            ## Overview
-            This document describes the technical architecture for \(state.projectName).
-
-            ## Components
-            - **Core Module** - Business logic and data models
-            - **UI Layer** - User interface components
-            - **Data Layer** - Persistence and networking
-
-            ## Patterns
-            - MVVM architecture for UI binding
-            - Repository pattern for data access
-            - Dependency injection for testability
-
-            ## File Structure
-            ```
-            src/
-            ├── models/
-            ├── views/
-            ├── services/
-            └── utils/
-            ```
-
-            ## Dependencies
-            - List key dependencies here
-            """
-            state.currentStep = .reviewArchitecture
+            await MainActor.run {
+                state.architectureContent = architecture
+                state.currentStep = .reviewArchitecture
+            }
+        } catch {
+            await MainActor.run {
+                state.architectureError = error.localizedDescription
+            }
         }
     }
 
