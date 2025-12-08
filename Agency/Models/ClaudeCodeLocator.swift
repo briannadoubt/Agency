@@ -1,7 +1,9 @@
 import Foundation
+import os.log
 
 /// Locates the Claude Code CLI binary on the system.
 struct ClaudeCodeLocator {
+    private static let logger = Logger(subsystem: "dev.agency.app", category: "ClaudeCodeLocator")
     /// Common installation paths for the claude CLI.
     static let commonPaths: [String] = [
         "/opt/homebrew/bin/claude",  // Homebrew on Apple Silicon
@@ -54,40 +56,71 @@ struct ClaudeCodeLocator {
 
     /// Locate the Claude CLI, checking user override first, then PATH, then common locations.
     func locate(userOverridePath: String? = nil) async -> Result<LocatorResult, LocatorError> {
+        Self.logger.info("Starting Claude CLI location...")
+        Self.logger.info("User override path: \(userOverridePath ?? "nil")")
+
         // 1. Check user override first
         if let override = userOverridePath?.trimmingCharacters(in: .whitespacesAndNewlines),
            !override.isEmpty {
             let expandedPath = (override as NSString).expandingTildeInPath
+            Self.logger.info("Checking user override: \(expandedPath)")
             if fileManager.fileExists(atPath: expandedPath) {
+                Self.logger.info("User override exists")
                 if fileManager.isExecutableFile(atPath: expandedPath) {
+                    Self.logger.info("User override is executable, checking version...")
                     let version = await getVersion(at: expandedPath)
+                    Self.logger.info("User override version: \(version ?? "nil")")
                     return .success(LocatorResult(path: expandedPath, version: version, source: .userOverride))
                 } else {
+                    Self.logger.warning("User override is not executable")
                     return .failure(.notExecutable(expandedPath))
                 }
+            } else {
+                Self.logger.warning("User override does not exist")
             }
         }
 
         // 2. Check common installation locations first (more reliable)
+        Self.logger.info("Checking \(Self.commonPaths.count) common paths...")
         for path in Self.commonPaths {
             let expandedPath = (path as NSString).expandingTildeInPath
-            if fileManager.fileExists(atPath: expandedPath),
-               fileManager.isExecutableFile(atPath: expandedPath) {
-                // Verify it actually works by getting version
-                if let version = await getVersion(at: expandedPath) {
-                    return .success(LocatorResult(path: expandedPath, version: version, source: .commonLocation))
+            Self.logger.info("Checking: \(expandedPath)")
+
+            let exists = fileManager.fileExists(atPath: expandedPath)
+            Self.logger.info("  exists: \(exists)")
+
+            if exists {
+                let isExecutable = fileManager.isExecutableFile(atPath: expandedPath)
+                Self.logger.info("  isExecutable: \(isExecutable)")
+
+                if isExecutable {
+                    Self.logger.info("  Checking version...")
+                    if let version = await getVersion(at: expandedPath) {
+                        Self.logger.info("  SUCCESS! Version: \(version)")
+                        return .success(LocatorResult(path: expandedPath, version: version, source: .commonLocation))
+                    } else {
+                        Self.logger.warning("  Version check failed (binary may be broken)")
+                    }
                 }
             }
         }
 
         // 3. Try PATH lookup via `which claude` as fallback
+        Self.logger.info("Trying PATH lookup...")
         if let pathResult = await lookupInPath() {
+            Self.logger.info("PATH lookup returned: \(pathResult)")
             // Verify it works
             if let version = await getVersion(at: pathResult) {
+                Self.logger.info("PATH result works! Version: \(version)")
                 return .success(LocatorResult(path: pathResult, version: version, source: .pathLookup))
+            } else {
+                Self.logger.warning("PATH result failed version check")
             }
+        } else {
+            Self.logger.info("PATH lookup returned nil")
         }
 
+        Self.logger.error("Claude CLI not found after checking all locations")
         return .failure(.notFound)
     }
 
@@ -110,18 +143,25 @@ struct ClaudeCodeLocator {
     // MARK: - Private
 
     private func lookupInPath() async -> String? {
-        // Try `which` first
+        Self.logger.info("Running /usr/bin/which claude...")
         let output = await processRunner.run(command: "/usr/bin/which", arguments: ["claude"])
+        Self.logger.info("which exit code: \(output.exitCode)")
+        Self.logger.info("which stdout: \(output.stdout)")
+        Self.logger.info("which stderr: \(output.stderr)")
+
         if output.exitCode == 0 {
             let rawPath = output.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
             // Handle "claude: aliased to /path" format from zsh
             let path: String
             if rawPath.contains("aliased to ") {
                 path = rawPath.components(separatedBy: "aliased to ").last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? rawPath
+                Self.logger.info("Extracted path from alias: \(path)")
             } else {
                 path = rawPath
             }
-            if !path.isEmpty, fileManager.fileExists(atPath: path) {
+            let exists = fileManager.fileExists(atPath: path)
+            Self.logger.info("Path '\(path)' exists: \(exists)")
+            if !path.isEmpty, exists {
                 return path
             }
         }
@@ -129,8 +169,15 @@ struct ClaudeCodeLocator {
     }
 
     private func getVersion(at path: String) async -> String? {
+        Self.logger.info("Getting version for: \(path)")
         let output = await processRunner.run(command: path, arguments: ["--version"])
-        guard output.exitCode == 0 else { return nil }
+        Self.logger.info("Version check exit code: \(output.exitCode)")
+        Self.logger.info("Version stdout: '\(output.stdout)'")
+        Self.logger.info("Version stderr: '\(output.stderr)'")
+        guard output.exitCode == 0 else {
+            Self.logger.warning("Version check failed with exit code \(output.exitCode)")
+            return nil
+        }
         let version = output.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         return version.isEmpty ? nil : version
     }
@@ -138,6 +185,8 @@ struct ClaudeCodeLocator {
 
 /// Simple process runner for CLI commands.
 struct ProcessRunner: Sendable {
+    private static let logger = Logger(subsystem: "dev.agency.app", category: "ProcessRunner")
+
     struct Output: Sendable {
         let stdout: String
         let stderr: String
@@ -151,6 +200,8 @@ struct ProcessRunner: Sendable {
              arguments: [String] = [],
              environment: [String: String]? = nil,
              timeout: Duration = defaultTimeout) async -> Output {
+        Self.logger.info("ProcessRunner.run: \(command) \(arguments.joined(separator: " "))")
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: command)
         process.arguments = arguments
@@ -166,7 +217,9 @@ struct ProcessRunner: Sendable {
 
         do {
             try process.run()
+            Self.logger.info("Process started successfully")
         } catch {
+            Self.logger.error("Process failed to start: \(error.localizedDescription)")
             return Output(stdout: "", stderr: error.localizedDescription, exitCode: 1)
         }
 
