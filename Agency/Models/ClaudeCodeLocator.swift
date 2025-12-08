@@ -4,9 +4,8 @@ import Foundation
 struct ClaudeCodeLocator {
     /// Common installation paths for the claude CLI.
     static let commonPaths: [String] = [
-        NSHomeDirectory() + "/.claude/local/claude",  // Claude Code native install
-        "/usr/local/bin/claude",
-        "/opt/homebrew/bin/claude",
+        "/opt/homebrew/bin/claude",  // Homebrew on Apple Silicon
+        "/usr/local/bin/claude",     // Homebrew on Intel / npm global
         NSHomeDirectory() + "/.local/bin/claude",
         NSHomeDirectory() + "/.npm-global/bin/claude",
         "/usr/bin/claude"
@@ -69,20 +68,23 @@ struct ClaudeCodeLocator {
             }
         }
 
-        // 2. Try PATH lookup via `which claude`
-        if let pathResult = await lookupInPath() {
-            let version = await getVersion(at: pathResult)
-            return .success(LocatorResult(path: pathResult, version: version, source: .pathLookup))
-        }
-
-        // 3. Check common installation locations
+        // 2. Check common installation locations first (more reliable)
         for path in Self.commonPaths {
             let expandedPath = (path as NSString).expandingTildeInPath
-            if fileManager.fileExists(atPath: expandedPath) {
-                if fileManager.isExecutableFile(atPath: expandedPath) {
-                    let version = await getVersion(at: expandedPath)
+            if fileManager.fileExists(atPath: expandedPath),
+               fileManager.isExecutableFile(atPath: expandedPath) {
+                // Verify it actually works by getting version
+                if let version = await getVersion(at: expandedPath) {
                     return .success(LocatorResult(path: expandedPath, version: version, source: .commonLocation))
                 }
+            }
+        }
+
+        // 3. Try PATH lookup via `which claude` as fallback
+        if let pathResult = await lookupInPath() {
+            // Verify it works
+            if let version = await getVersion(at: pathResult) {
+                return .success(LocatorResult(path: pathResult, version: version, source: .pathLookup))
             }
         }
 
