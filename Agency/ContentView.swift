@@ -71,6 +71,15 @@ struct ContentView: View {
                     }
                 }
 
+                if loader.loadedSnapshot != nil {
+                    Section("Supervisor") {
+                        SupervisorStatusView(
+                            supervisor: .shared,
+                            projectRoot: loader.loadedSnapshot?.rootURL
+                        )
+                    }
+                }
+
                 if let snapshot = loader.loadedSnapshot {
                     Section("Phases") {
                         ForEach(snapshot.phases, id: \.phase.number) { phase in
@@ -148,6 +157,17 @@ struct ContentView: View {
             guard selectedPhaseNumber == nil,
                   let first = snapshot?.phases.first?.phase.number else { return }
             selectedPhaseNumber = first
+        }
+        .onChange(of: loader.loadedSnapshot) { oldSnapshot, newSnapshot in
+            // Auto-start supervisor when project loads (if enabled)
+            guard oldSnapshot == nil,
+                  let rootURL = newSnapshot?.rootURL,
+                  AgentSupervisor.shared.autoStartEnabled,
+                  !AgentSupervisor.shared.isCoordinatorRunning else { return }
+
+            Task {
+                await AgentSupervisor.shared.startCoordinator(projectRoot: rootURL)
+            }
         }
         .onChange(of: isShowingPhaseCreator) { _, presented in
             if !presented {

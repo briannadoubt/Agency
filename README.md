@@ -6,31 +6,31 @@ Agent-assisted kanban for macOS, powered by Markdown cards under `project/phase-
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Agency App (SwiftUI)                      │
+│                        Agency App (SwiftUI)                     │
 │                                                                 │
-│  ┌─────────────┐    ┌─────────────┐    ┌──────────────────┐    │
-│  │ CardListView│    │AgentRunPanel│    │SupervisorStatus  │    │
-│  └─────────────┘    └─────────────┘    └──────────────────┘    │
+│  ┌─────────────┐    ┌─────────────┐    ┌──────────────────┐     │
+│  │ CardListView│    │AgentRunPanel│    │SupervisorStatus  │     │
+│  └─────────────┘    └─────────────┘    └──────────────────┘     │
 └───────────────────────────┬─────────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────────┐
-│                      AgentSupervisor                             │
+│                      AgentSupervisor                            │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │                 SupervisorCoordinator                       │ │
+│  │                 SupervisorCoordinator                      │ │
 │  │  ┌─────────────┐  ┌──────────────┐  ┌───────────────────┐  │ │
 │  │  │BacklogWatcher│  │FlowPipeline  │  │SupervisorState   │  │ │
 │  │  │ (FSEvents)   │  │Orchestrator  │  │Store             │  │ │
 │  │  └─────────────┘  └──────────────┘  └───────────────────┘  │ │
 │  └────────────────────────────────────────────────────────────┘ │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │                   AgentScheduler                            │ │
+│  │                   AgentScheduler                           │ │
 │  │  • Queue management (soft/hard limits)                     │ │
 │  │  • Concurrency control (per-flow limits)                   │ │
 │  │  • Card locking (prevent concurrent runs on same card)     │ │
 │  │  • Backoff/retry logic                                     │ │
 │  └────────────────────────────────────────────────────────────┘ │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │                AgentFlowCoordinator                         │ │
+│  │                AgentFlowCoordinator                        │ │
 │  │  • Enqueue runs with frontmatter updates                   │ │
 │  │  • Complete runs with checklist/history updates            │ │
 │  │  • Parse result.json for flow-specific data                │ │
@@ -38,15 +38,15 @@ Agent-assisted kanban for macOS, powered by Markdown cards under `project/phase-
 └───────────────────────────┬─────────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────────┐
-│                     AgentRunner (UI-facing)                      │
+│                     AgentRunner (UI-facing)                     │
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │                   ProviderRegistry                           ││
+│  │                   ProviderRegistry                          ││
 │  │  • Registers CLI providers (Claude Code, future: Aider)     ││
 │  │  • Checks availability (CLI path, version)                  ││
 │  │  • Selects default provider for flows                       ││
 │  └─────────────────────────────────────────────────────────────┘│
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │                    AgentExecutors                            ││
+│  │                    AgentExecutors                           ││
 │  │  • SimulatedAgentExecutor (testing/previews)                ││
 │  │  • XPCAgentExecutor (XPC-based workers)                     ││
 │  │  • ClaudeCodeExecutor (direct Claude Code CLI)              ││
@@ -56,9 +56,9 @@ Agent-assisted kanban for macOS, powered by Markdown cards under `project/phase-
 └───────────────────────────┬─────────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────────┐
-│                      CLI Provider Layer                          │
+│                      CLI Provider Layer                         │
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │                 AgentCLIProvider Protocol                    ││
+│  │                 AgentCLIProvider Protocol                   ││
 │  │  • identifier, displayName                                  ││
 │  │  • supportedFlows, capabilities                             ││
 │  │  • locator: CLILocating                                     ││
@@ -66,7 +66,7 @@ Agent-assisted kanban for macOS, powered by Markdown cards under `project/phase-
 │  │  • buildArguments(), buildEnvironment()                     ││
 │  └─────────────────────────────────────────────────────────────┘│
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │                   ClaudeCodeProvider                         ││
+│  │                   ClaudeCodeProvider                        ││
 │  │  • Locates claude CLI in common paths                       ││
 │  │  • Parses stream-json output                                ││
 │  │  • Supports: implement, review, research, plan              ││
@@ -74,15 +74,15 @@ Agent-assisted kanban for macOS, powered by Markdown cards under `project/phase-
 └───────────────────────────┬─────────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────────┐
-│                       Prompt System                              │
+│                       Prompt System                             │
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │                   PromptBuilder                              ││
+│  │                   PromptBuilder                             ││
 │  │  • Loads templates (project → app → built-in fallback)      ││
 │  │  • Resolves {{VARIABLE}} and {{#VAR}}...{{/VAR}} blocks     ││
 │  │  • Combines system + role + flow templates                  ││
 │  └─────────────────────────────────────────────────────────────┘│
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │                   PromptContext                              ││
+│  │                   PromptContext                             ││
 │  │  • Card info (title, code, summary, acceptance criteria)    ││
 │  │  • Flow-specific (branch, reviewTarget, researchPrompt)     ││
 │  │  • Project context (AGENTS.md, CLAUDE.md)                   ││

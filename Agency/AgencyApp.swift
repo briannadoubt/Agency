@@ -15,8 +15,7 @@ struct AgencyApp: App {
         }
 
         Settings {
-            ClaudeCodeSettingsView()
-                .frame(minWidth: 500, minHeight: 400)
+            SettingsView()
         }
     }
 }

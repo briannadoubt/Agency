@@ -17,14 +17,18 @@ final class AgentSupervisor {
     private let capabilityChecklist: CapabilityChecklist
     private var jobs: [UUID: WorkerJob] = [:]
 
+    /// The agent scheduler for coordinating runs.
+    private var scheduler: AgentScheduler!
+
     /// The background supervisor coordinator for automatic card processing.
     private(set) lazy var coordinator: SupervisorCoordinator = {
         // Create worker launcher adapter
         let workerLauncher = SchedulerWorkerLauncherAdapter(supervisor: self)
 
-        // Create scheduler with minimal configuration
-        let scheduler = AgentScheduler(
-            config: AgentSchedulerConfig(maxConcurrent: 2),
+        // Create scheduler using settings
+        let settings = SupervisorSettings.shared
+        scheduler = AgentScheduler(
+            config: settings.makeSchedulerConfig(),
             launcher: workerLauncher,
             lifecycle: .noop,
             now: { Date() },
@@ -83,6 +87,23 @@ final class AgentSupervisor {
     func resumeCoordinator() async {
         await coordinator.resume()
         logger.info("Resumed supervisor coordinator")
+    }
+
+    /// Applies updated settings to the scheduler.
+    func applySettings() async {
+        let settings = SupervisorSettings.shared
+        await scheduler.updateConfiguration(settings.makeSchedulerConfig())
+        logger.info("Applied supervisor settings: maxConcurrent=\(settings.maxConcurrent)")
+    }
+
+    /// Returns the default pipeline from settings.
+    var defaultPipeline: FlowPipeline {
+        SupervisorSettings.shared.defaultPipeline
+    }
+
+    /// Returns whether auto-start is enabled.
+    var autoStartEnabled: Bool {
+        SupervisorSettings.shared.autoStart
     }
 
     /// Registers both the supervisor and worker SMAppService plists so that launchd can start them on demand.
