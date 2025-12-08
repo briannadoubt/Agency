@@ -4,6 +4,7 @@ import Foundation
 struct ClaudeCodeLocator {
     /// Common installation paths for the claude CLI.
     static let commonPaths: [String] = [
+        NSHomeDirectory() + "/.claude/local/claude",  // Claude Code native install
         "/usr/local/bin/claude",
         "/opt/homebrew/bin/claude",
         NSHomeDirectory() + "/.local/bin/claude",
@@ -107,11 +108,22 @@ struct ClaudeCodeLocator {
     // MARK: - Private
 
     private func lookupInPath() async -> String? {
+        // Try `which` first
         let output = await processRunner.run(command: "/usr/bin/which", arguments: ["claude"])
-        guard output.exitCode == 0 else { return nil }
-        let path = output.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty, fileManager.fileExists(atPath: path) else { return nil }
-        return path
+        if output.exitCode == 0 {
+            let rawPath = output.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Handle "claude: aliased to /path" format from zsh
+            let path: String
+            if rawPath.contains("aliased to ") {
+                path = rawPath.components(separatedBy: "aliased to ").last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? rawPath
+            } else {
+                path = rawPath
+            }
+            if !path.isEmpty, fileManager.fileExists(atPath: path) {
+                return path
+            }
+        }
+        return nil
     }
 
     private func getVersion(at path: String) async -> String? {
