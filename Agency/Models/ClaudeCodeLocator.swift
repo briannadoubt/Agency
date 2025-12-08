@@ -31,6 +31,7 @@ struct ClaudeCodeLocator {
 
     /// How the CLI was discovered.
     enum DiscoverySource: String, Sendable, Equatable {
+        case bookmark = "Saved Location"
         case userOverride = "User Override"
         case pathLookup = "PATH"
         case commonLocation = "Common Location"
@@ -54,12 +55,32 @@ struct ClaudeCodeLocator {
         }
     }
 
-    /// Locate the Claude CLI, checking user override first, then PATH, then common locations.
+    /// Locate the Claude CLI, checking bookmark first, then user override, then common locations, then PATH.
     func locate(userOverridePath: String? = nil) async -> Result<LocatorResult, LocatorError> {
         Self.logger.info("Starting Claude CLI location...")
         Self.logger.info("User override path: \(userOverridePath ?? "nil")")
 
-        // 1. Check user override first
+        // 1. Check security-scoped bookmark first (required for sandboxed apps)
+        Self.logger.info("Checking for security-scoped bookmark...")
+        if let bookmarkURL = await CLIBookmarkStore.shared.startAccessing() {
+            let path = bookmarkURL.path
+            Self.logger.info("Bookmark found: \(path)")
+            // Skip isExecutable check for bookmarks - symlinks may not report as executable
+            // Just try to get the version directly
+            Self.logger.info("Bookmark path found, checking version...")
+            let version = await getVersion(at: path)
+            if version != nil {
+                Self.logger.info("Bookmark version: \(version ?? "nil")")
+                return .success(LocatorResult(path: path, version: version, source: .bookmark))
+            } else {
+                Self.logger.warning("Bookmark version check failed - CLI may not be accessible")
+                await CLIBookmarkStore.shared.stopAccessing()
+            }
+        } else {
+            Self.logger.info("No bookmark available")
+        }
+
+        // 2. Check user override
         if let override = userOverridePath?.trimmingCharacters(in: .whitespacesAndNewlines),
            !override.isEmpty {
             let expandedPath = (override as NSString).expandingTildeInPath
@@ -80,7 +101,7 @@ struct ClaudeCodeLocator {
             }
         }
 
-        // 2. Check common installation locations first (more reliable)
+        // 3. Check common installation locations (more reliable than PATH)
         Self.logger.info("Checking \(Self.commonPaths.count) common paths...")
         for path in Self.commonPaths {
             let expandedPath = (path as NSString).expandingTildeInPath
@@ -105,7 +126,7 @@ struct ClaudeCodeLocator {
             }
         }
 
-        // 3. Try PATH lookup via `which claude` as fallback
+        // 4. Try PATH lookup via `which claude` as fallback
         Self.logger.info("Trying PATH lookup...")
         if let pathResult = await lookupInPath() {
             Self.logger.info("PATH lookup returned: \(pathResult)")

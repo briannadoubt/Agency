@@ -30,8 +30,15 @@ struct ClaudeCodeExecutor: AgentExecutor {
 
         // Resolve project root once and track for cleanup
         let workingDirectory = request.resolvedProjectRoot
+        var cliIsBookmark = false
         defer {
             workingDirectory?.stopAccessingSecurityScopedResource()
+            // Stop accessing CLI bookmark if we used one
+            if cliIsBookmark {
+                Task {
+                    await CLIBookmarkStore.shared.stopAccessing()
+                }
+            }
         }
 
         do {
@@ -40,7 +47,8 @@ struct ClaudeCodeExecutor: AgentExecutor {
             await emit(.log("Claude Code executor starting (\(request.flow))"))
 
             // Validate prerequisites
-            let cliPath = try await resolveCLIPath()
+            let cliResolution = try await resolveCLIPath()
+            cliIsBookmark = cliResolution.isBookmark
             let environment = try resolveEnvironment()
             let prompt: String
             if usePromptBuilder, let projectRoot = workingDirectory {
@@ -53,7 +61,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
 
             // Run the CLI
             let result = try await runClaude(
-                cliPath: cliPath,
+                cliPath: cliResolution.path,
                 prompt: prompt,
                 workingDirectory: workingDirectory,
                 environment: environment,
@@ -126,7 +134,12 @@ struct ClaudeCodeExecutor: AgentExecutor {
 
     // MARK: - Private
 
-    private func resolveCLIPath() async throws -> String {
+    private struct CLIResolution {
+        let path: String
+        let isBookmark: Bool
+    }
+
+    private func resolveCLIPath() async throws -> CLIResolution {
         let override = await MainActor.run {
             ClaudeCodeSettings.shared.cliPathOverride
         }
@@ -135,7 +148,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
 
         switch result {
         case .success(let info):
-            return info.path
+            return CLIResolution(path: info.path, isBookmark: info.source == .bookmark)
         case .failure:
             throw ExecutorError.cliNotFound
         }
