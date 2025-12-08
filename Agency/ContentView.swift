@@ -13,11 +13,13 @@ struct ContentView: View {
     @State private var didAutoLoadProject = false
     @State private var planFlowEnabled = FeatureFlags.planFlowEnabled
     @State private var deepLinkCardPath: String?
+    @Binding var showNewProjectWizard: Bool
 
-    init() {
+    init(showNewProjectWizard: Binding<Bool> = .constant(false)) {
         let loader = ProjectLoader()
         _loader = State(initialValue: loader)
         _agentRunner = State(initialValue: AgentRunner(projectLoader: loader))
+        _showNewProjectWizard = showNewProjectWizard
         AppIntentsProjectAccess.shared.register(loader)
     }
 
@@ -27,6 +29,13 @@ struct ContentView: View {
         NavigationSplitView {
             List(selection: $selectedPhaseNumber) {
                 Section("Project") {
+                    Button {
+                        showNewProjectWizard = true
+                    } label: {
+                        Label("New Project…", systemImage: "sparkles")
+                    }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
+
                     Button {
                         showingImporter = true
                     } label: {
@@ -40,7 +49,7 @@ struct ContentView: View {
                         }
                         isShowingPhaseCreator = true
                     } label: {
-                        Label("Add Phase (with Agent…)", systemImage: "sparkles")
+                        Label("Add Phase (with Agent…)", systemImage: "plus.circle")
                     }
                     .disabled(loader.loadedSnapshot == nil || !planFlowEnabled)
                     .accessibilityLabel("Add phase with agent")
@@ -77,6 +86,14 @@ struct ContentView: View {
                             supervisor: .shared,
                             projectRoot: loader.loadedSnapshot?.rootURL
                         )
+                    }
+
+                    Section("History") {
+                        NavigationLink {
+                            RunHistoryView()
+                        } label: {
+                            Label("Run History", systemImage: "clock.arrow.circlepath")
+                        }
                     }
                 }
 
@@ -141,6 +158,11 @@ struct ContentView: View {
                                        }
                                    }
                                })
+        }
+        .sheet(isPresented: $showNewProjectWizard) {
+            NewProjectWizardView { createdURL in
+                loader.loadProject(at: createdURL)
+            }
         }
         .task {
             guard !didAutoLoadProject else { return }
@@ -512,6 +534,9 @@ private struct PhaseDetail: View {
                         onSelect: handleSelect,
                         onToggleCriterion: handleToggleCriterion,
                         onRunWithClaudeCode: handleRunWithClaudeCode,
+                        onRunWithPipeline: handleRunWithPipeline,
+                        onCancelPipeline: handleCancelPipeline,
+                        pipelineExecution: pipelineExecution,
                         reduceMotion: reduceMotion)
                 .frame(minHeight: DesignTokens.Layout.boardMinimumHeight)
 
@@ -663,6 +688,26 @@ private struct PhaseDetail: View {
         }
     }
 
+    private func handleRunWithPipeline(_ card: Card, _ pipeline: FlowPipeline) {
+        Task {
+            do {
+                try await AgentSupervisor.shared.coordinator.enqueueCard(card, pipeline: pipeline)
+            } catch {
+                await MainActor.run {
+                    runError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func handleCancelPipeline(_ card: Card) {
+        AgentSupervisor.shared.coordinator.pipelineOrchestrator.cancelPipeline(cardPath: card.filePath.path)
+    }
+
+    private func pipelineExecution(for card: Card) -> PipelineExecution? {
+        AgentSupervisor.shared.coordinator.pipelineOrchestrator.execution(for: card.filePath.path)
+    }
+
     private func createCard() {
         let trimmedTitle = newCardTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else {
@@ -700,6 +745,9 @@ private struct KanbanBoard: View {
     let onSelect: (Card) -> Void
     let onToggleCriterion: (Card, Int) -> Void
     let onRunWithClaudeCode: (Card) -> Void
+    let onRunWithPipeline: (Card, FlowPipeline) -> Void
+    let onCancelPipeline: (Card) -> Void
+    let pipelineExecution: (Card) -> PipelineExecution?
     let reduceMotion: Bool
 
     @FocusState private var focusedCardPath: String?
@@ -719,6 +767,9 @@ private struct KanbanBoard: View {
                                  onSelect: onSelect,
                                  onToggleCriterion: onToggleCriterion,
                                  onRunWithClaudeCode: onRunWithClaudeCode,
+                                 onRunWithPipeline: onRunWithPipeline,
+                                 onCancelPipeline: onCancelPipeline,
+                                 pipelineExecution: pipelineExecution,
                                  focusedCardPath: $focusedCardPath,
                                  reduceMotion: reduceMotion)
                         .frame(width: DesignTokens.Layout.boardColumnWidth)
@@ -747,6 +798,9 @@ private struct KanbanColumn: View {
     let onSelect: (Card) -> Void
     let onToggleCriterion: (Card, Int) -> Void
     let onRunWithClaudeCode: (Card) -> Void
+    let onRunWithPipeline: (Card, FlowPipeline) -> Void
+    let onCancelPipeline: (Card) -> Void
+    let pipelineExecution: (Card) -> PipelineExecution?
     let focusedCardPath: FocusState<String?>.Binding
     let reduceMotion: Bool
 
@@ -787,7 +841,8 @@ private struct KanbanColumn: View {
                                          isFocused: isFocused,
                                          searchQuery: searchQuery,
                                          reduceMotion: reduceMotion,
-                                         onToggleCriterion: onToggleCriterion)
+                                         onToggleCriterion: onToggleCriterion,
+                                         pipelineExecution: pipelineExecution(card))
                             }
                             .buttonStyle(.plain)
                             .contextMenu {
@@ -795,6 +850,30 @@ private struct KanbanColumn: View {
                                     onRunWithClaudeCode(card)
                                 } label: {
                                     Label("Run with Claude Code", systemImage: "bolt.fill")
+                                }
+
+                                Divider()
+
+                                Menu {
+                                    ForEach(FlowPipeline.allCases, id: \.self) { pipeline in
+                                        Button {
+                                            onRunWithPipeline(card, pipeline)
+                                        } label: {
+                                            Text(pipeline.displayName)
+                                        }
+                                    }
+                                } label: {
+                                    Label("Run with Pipeline...", systemImage: "arrow.triangle.branch")
+                                }
+
+                                if pipelineExecution(card) != nil {
+                                    Divider()
+
+                                    Button(role: .destructive) {
+                                        onCancelPipeline(card)
+                                    } label: {
+                                        Label("Cancel Pipeline", systemImage: "xmark.circle")
+                                    }
                                 }
                             }
                             .focused(focusedCardPath, equals: cardPath)
@@ -918,6 +997,7 @@ private struct CardTile: View {
     let searchQuery: String
     let reduceMotion: Bool
     let onToggleCriterion: (Card, Int) -> Void
+    var pipelineExecution: PipelineExecution? = nil
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -1015,6 +1095,10 @@ private struct CardTile: View {
                 .background(Capsule().fill(DesignTokens.Colors.stroke.opacity(0.55)))
                 .foregroundStyle(DesignTokens.Colors.textPrimary)
 
+            if let execution = pipelineExecution {
+                pipelineBadge(for: execution)
+            }
+
             Spacer(minLength: DesignTokens.Spacing.small)
 
             Text(presentation.riskLevel.label)
@@ -1022,6 +1106,24 @@ private struct CardTile: View {
                 .badgeStyle(badgeStyle(for: presentation.riskLevel))
                 .accessibilityLabel("Risk \(presentation.riskLevel.label)")
         }
+    }
+
+    @ViewBuilder
+    private func pipelineBadge(for execution: PipelineExecution) -> some View {
+        let flowIndex = execution.currentFlowIndex + 1
+        let totalFlows = execution.pipeline.flows.count
+        let currentFlow = execution.currentFlow?.rawValue.capitalized ?? "Complete"
+
+        HStack(spacing: 4) {
+            Image(systemName: "arrow.triangle.branch")
+                .font(.system(size: 10))
+            Text("\(flowIndex)/\(totalFlows): \(currentFlow)")
+                .font(DesignTokens.Typography.caption.weight(.medium))
+        }
+        .padding(.horizontal, DesignTokens.Spacing.xSmall)
+        .padding(.vertical, DesignTokens.Spacing.grid)
+        .background(Capsule().fill(Color.orange.opacity(0.2)))
+        .foregroundStyle(.orange)
     }
 
     private var metadataRow: some View {

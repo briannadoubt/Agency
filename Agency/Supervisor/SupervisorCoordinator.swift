@@ -31,7 +31,7 @@ final class SupervisorCoordinator {
     // Dependencies
     private let scheduler: AgentScheduler
     private let stateStore: SupervisorStateStore
-    private let pipelineOrchestrator: FlowPipelineOrchestrator
+    let pipelineOrchestrator: FlowPipelineOrchestrator
     private let backlogWatcher: BacklogWatcher
     private let flowCoordinator: AgentFlowCoordinator
     private let dateProvider: @Sendable () -> Date
@@ -246,12 +246,28 @@ final class SupervisorCoordinator {
         runID: UUID,
         result: WorkerRunResult
     ) async {
+        let startedAt = activeRuns[runID]?.startedAt ?? Date()
         activeRuns.removeValue(forKey: runID)
 
         guard let execution = pipelineOrchestrator.execution(for: card.filePath.path),
               let currentFlow = execution.currentFlow else {
             logger.debug("No active pipeline for completed run \(runID)")
             return
+        }
+
+        // Record to history
+        do {
+            try RunHistoryStore.shared.addRecord(
+                runID: runID,
+                cardPath: card.filePath.path,
+                cardTitle: card.title,
+                flow: currentFlow.rawValue,
+                pipeline: execution.pipeline.rawValue,
+                startedAt: startedAt,
+                result: result
+            )
+        } catch {
+            logger.warning("Failed to record run history: \(error.localizedDescription)")
         }
 
         let action = pipelineOrchestrator.onFlowCompleted(
@@ -271,7 +287,7 @@ final class SupervisorCoordinator {
 
         case .pipelineComplete:
             logger.info("Pipeline complete for \(card.code)")
-            // Card will be moved to done by the flow coordinator
+            await handlePipelineComplete(card: card)
 
         case .retryWithBackoff(let delay):
             scheduleRetry(for: card, flow: currentFlow, after: delay)
@@ -299,6 +315,59 @@ final class SupervisorCoordinator {
                 self?.pendingRetries.removeValue(forKey: cardPath)
             }
         }
+    }
+
+    // MARK: - Auto-Move to Done
+
+    private func handlePipelineComplete(card: Card) async {
+        guard SupervisorSettings.shared.autoMoveToStatus else {
+            logger.debug("Auto-move disabled; skipping for \(card.code)")
+            return
+        }
+
+        guard let projectRoot else {
+            logger.warning("No project root; cannot auto-move \(card.code)")
+            return
+        }
+
+        // Check if all acceptance criteria are complete
+        let allCriteriaComplete = card.acceptanceCriteria.allSatisfy(\.isComplete)
+        guard allCriteriaComplete else {
+            logger.info("Not all criteria complete for \(card.code); skipping auto-move")
+            return
+        }
+
+        // Skip if already in done
+        guard card.status != .done else {
+            logger.debug("Card \(card.code) already in done")
+            return
+        }
+
+        do {
+            // Update card frontmatter to mark as completed
+            try await updateCardStatus(card: card, newStatus: "complete")
+
+            // Re-parse the card after status update
+            let contents = try String(contentsOf: card.filePath, encoding: .utf8)
+            let updatedCard = try CardFileParser().parse(fileURL: card.filePath, contents: contents)
+
+            // Move to done
+            let mover = CardMover()
+            try await mover.move(card: updatedCard, to: .done, rootURL: projectRoot, logHistoryEntry: true)
+
+            logger.info("Auto-moved \(card.code) to done after pipeline completion")
+        } catch {
+            logger.error("Failed to auto-move \(card.code): \(error.localizedDescription)")
+        }
+    }
+
+    private func updateCardStatus(card: Card, newStatus: String) async throws {
+        let writer = CardMarkdownWriter()
+        let snapshot = try writer.loadSnapshot(for: card)
+        var draft = CardDetailFormDraft.from(card: snapshot.card)
+        draft.agentStatus = newStatus
+        draft.newHistoryEntry = "\(DateFormatters.dateString(from: dateProvider())) - Pipeline completed; auto-moved to done"
+        _ = try writer.saveFormDraft(draft, appendHistory: true, snapshot: snapshot)
     }
 
     // MARK: - State Persistence

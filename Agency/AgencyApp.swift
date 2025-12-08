@@ -9,9 +9,19 @@ import SwiftUI
 
 @main
 struct AgencyApp: App {
+    @State private var showingNewProjectWizard = false
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(showNewProjectWizard: $showingNewProjectWizard)
+        }
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button("New Project...") {
+                    showingNewProjectWizard = true
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+            }
         }
 
         Settings {

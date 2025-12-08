@@ -999,6 +999,7 @@ private struct AgentControlPanel: View {
 
     @Environment(AgentRunner.self) private var agentRunner
     @Environment(\.colorScheme) private var colorScheme
+    @State private var selectedPipeline: FlowPipeline = SupervisorSettings.shared.defaultPipeline
 
     private var claudeCodeStatus: ClaudeCodeSettings.CLIStatus {
         ClaudeCodeSettings.shared.status
@@ -1051,6 +1052,14 @@ private struct AgentControlPanel: View {
         return runState.phase == .queued || runState.phase == .running
     }
 
+    private var pipelineExecution: PipelineExecution? {
+        AgentSupervisor.shared.coordinator.pipelineOrchestrator.execution(for: card.filePath.path)
+    }
+
+    private var isPipelineActive: Bool {
+        pipelineExecution != nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.medium) {
             HStack(spacing: DesignTokens.Spacing.small) {
@@ -1072,6 +1081,10 @@ private struct AgentControlPanel: View {
             .pickerStyle(.segmented)
 
             backendPicker
+
+            Divider()
+
+            pipelineSection
 
             HStack(spacing: DesignTokens.Spacing.small) {
                 if let runState, isActive {
@@ -1181,6 +1194,71 @@ private struct AgentControlPanel: View {
                 Text(reason)
                     .font(DesignTokens.Typography.caption)
                     .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var pipelineSection: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.small) {
+            HStack(spacing: DesignTokens.Spacing.small) {
+                Label("Pipeline", systemImage: "arrow.triangle.branch")
+                    .font(DesignTokens.Typography.caption.weight(.semibold))
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+
+                Spacer()
+
+                if let execution = pipelineExecution {
+                    let flowIndex = execution.currentFlowIndex + 1
+                    let totalFlows = execution.pipeline.flows.count
+                    let currentFlow = execution.currentFlow?.rawValue.capitalized ?? "Complete"
+
+                    Text("\(flowIndex)/\(totalFlows): \(currentFlow)")
+                        .font(DesignTokens.Typography.caption.weight(.medium))
+                        .padding(.horizontal, DesignTokens.Spacing.xSmall)
+                        .padding(.vertical, DesignTokens.Spacing.grid)
+                        .background(Capsule().fill(Color.orange.opacity(0.2)))
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            HStack(spacing: DesignTokens.Spacing.small) {
+                Picker("Pipeline", selection: $selectedPipeline) {
+                    ForEach(FlowPipeline.allCases, id: \.self) { pipeline in
+                        Text(pipeline.displayName).tag(pipeline)
+                    }
+                }
+                .pickerStyle(.menu)
+                .disabled(isPipelineActive)
+
+                if isPipelineActive {
+                    Button(role: .destructive) {
+                        AgentSupervisor.shared.coordinator.pipelineOrchestrator.cancelPipeline(cardPath: card.filePath.path)
+                    } label: {
+                        Label("Cancel", systemImage: "xmark.circle")
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    Button {
+                        Task {
+                            do {
+                                try await AgentSupervisor.shared.coordinator.enqueueCard(card, pipeline: selectedPipeline)
+                            } catch {
+                                agentError = error.localizedDescription
+                            }
+                        }
+                    } label: {
+                        Label("Run Pipeline", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!AgentSupervisor.shared.isCoordinatorRunning)
+                }
+            }
+
+            if !AgentSupervisor.shared.isCoordinatorRunning {
+                Text("Start the supervisor to run pipelines")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textMuted)
             }
         }
     }
