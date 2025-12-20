@@ -31,8 +31,25 @@ enum AgentBackendKind: String, CaseIterable, Identifiable {
     case xpc              // XPC-based agent workers
     case phaseScaffolding // phase directory scaffolding for plan flow only
     case claudeCode       // Claude Code CLI via XPC worker
+    case ollama           // Ollama HTTP provider (local models)
+    case httpProvider     // Generic HTTP provider (custom endpoints)
 
     var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .simulated: return "Simulated"
+        case .xpc: return "XPC Worker"
+        case .phaseScaffolding: return "Phase Scaffolding"
+        case .claudeCode: return "Claude Code"
+        case .ollama: return "Ollama"
+        case .httpProvider: return "HTTP Provider"
+        }
+    }
+
+    var isHTTPBased: Bool {
+        self == .ollama || self == .httpProvider
+    }
 }
 
 struct AgentRunState: Identifiable, Equatable {
@@ -144,6 +161,26 @@ final class AgentRunner {
                 Self.logger.debug("Using provider-based executor for Claude Code")
                 return providerExecutor
             }
+        }
+
+        // For Ollama backend, use HTTP executor
+        if backend == .ollama {
+            if let httpProvider = providerRegistry.httpProvider(for: "ollama") {
+                Self.logger.debug("Using HTTP executor for Ollama")
+                return GenericHTTPExecutor(provider: httpProvider)
+            }
+            Self.logger.warning("Ollama provider not registered")
+            return nil
+        }
+
+        // For generic HTTP provider, use the default HTTP provider
+        if backend == .httpProvider {
+            if let httpProvider = providerRegistry.defaultHTTPProvider(for: flow) {
+                Self.logger.debug("Using HTTP executor for \(httpProvider.identifier)")
+                return GenericHTTPExecutor(provider: httpProvider)
+            }
+            Self.logger.warning("No HTTP provider available for flow \(flow.rawValue)")
+            return nil
         }
 
         // Fall back to registered executor
