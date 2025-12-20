@@ -9,6 +9,11 @@ struct SettingsView: View {
                     Label("Claude Code", systemImage: "terminal")
                 }
 
+            HTTPProviderSettingsView()
+                .tabItem {
+                    Label("HTTP Providers", systemImage: "network")
+                }
+
             SupervisorSettingsView()
                 .tabItem {
                     Label("Background Processing", systemImage: "gearshape.2")

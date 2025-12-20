@@ -1,7 +1,7 @@
 import Foundation
 import os.log
 
-/// Registry for CLI providers, managing discovery and selection.
+/// Registry for CLI and HTTP providers, managing discovery and selection.
 @MainActor @Observable
 final class ProviderRegistry {
     private let logger = Logger(subsystem: "dev.agency.app", category: "ProviderRegistry")
@@ -9,8 +9,11 @@ final class ProviderRegistry {
     /// Shared instance for app-wide access.
     static let shared = ProviderRegistry()
 
-    /// Registered providers by identifier.
-    private var providers: [String: any AgentCLIProvider] = [:]
+    /// Registered CLI providers by identifier.
+    private var cliProviders: [String: any AgentCLIProvider] = [:]
+
+    /// Registered HTTP providers by identifier.
+    private var httpProviders: [String: any AgentHTTPProvider] = [:]
 
     /// Cached availability status for each provider.
     private var availabilityCache: [String: ProviderAvailability] = [:]
@@ -23,51 +26,122 @@ final class ProviderRegistry {
         registerBuiltInProviders()
     }
 
-    // MARK: - Public API
+    // MARK: - CLI Provider API
 
-    /// Registers a provider.
+    /// Registers a CLI provider.
     func register(_ provider: any AgentCLIProvider) {
-        providers[provider.identifier] = provider
+        cliProviders[provider.identifier] = provider
         availabilityCache.removeValue(forKey: provider.identifier)
-        logger.info("Registered provider: \(provider.identifier)")
+        logger.info("Registered CLI provider: \(provider.identifier)")
     }
 
-    /// Unregisters a provider.
+    /// Unregisters a CLI provider.
     func unregister(identifier: String) {
-        providers.removeValue(forKey: identifier)
+        cliProviders.removeValue(forKey: identifier)
+        httpProviders.removeValue(forKey: identifier)
         availabilityCache.removeValue(forKey: identifier)
         logger.info("Unregistered provider: \(identifier)")
     }
 
-    /// Returns a provider by identifier.
+    /// Returns a CLI provider by identifier.
     func provider(for identifier: String) -> (any AgentCLIProvider)? {
-        providers[identifier]
+        cliProviders[identifier]
     }
 
-    /// Returns all registered providers.
+    /// Returns all registered CLI providers.
     var registeredProviders: [any AgentCLIProvider] {
-        Array(providers.values)
+        Array(cliProviders.values)
     }
 
-    /// Returns providers that support a given flow.
+    /// Returns CLI providers that support a given flow.
     func providers(supporting flow: AgentFlow) -> [any AgentCLIProvider] {
-        providers.values.filter { $0.supportedFlows.contains(flow) }
+        cliProviders.values.filter { $0.supportedFlows.contains(flow) }
     }
 
-    /// Returns the default provider for a given flow.
+    /// Returns the default CLI provider for a given flow.
     func defaultProvider(for flow: AgentFlow) -> (any AgentCLIProvider)? {
         // Prefer Claude Code, fall back to first available
-        if let claude = providers["claude-code"], claude.supportedFlows.contains(flow) {
+        if let claude = cliProviders["claude-code"], claude.supportedFlows.contains(flow) {
             return claude
         }
         return providers(supporting: flow).first
     }
 
-    /// Checks availability of all providers.
+    // MARK: - HTTP Provider API
+
+    /// Registers an HTTP provider.
+    func register(_ provider: any AgentHTTPProvider) {
+        httpProviders[provider.identifier] = provider
+        availabilityCache.removeValue(forKey: provider.identifier)
+        logger.info("Registered HTTP provider: \(provider.identifier)")
+    }
+
+    /// Returns an HTTP provider by identifier.
+    func httpProvider(for identifier: String) -> (any AgentHTTPProvider)? {
+        httpProviders[identifier]
+    }
+
+    /// Returns all registered HTTP providers.
+    var registeredHTTPProviders: [any AgentHTTPProvider] {
+        Array(httpProviders.values)
+    }
+
+    /// Returns HTTP providers that support a given flow.
+    func httpProviders(supporting flow: AgentFlow) -> [any AgentHTTPProvider] {
+        httpProviders.values.filter { $0.supportedFlows.contains(flow) }
+    }
+
+    /// Returns the default HTTP provider for a given flow.
+    func defaultHTTPProvider(for flow: AgentFlow) -> (any AgentHTTPProvider)? {
+        // Prefer Ollama for local models, fall back to first available
+        if let ollama = httpProviders["ollama"], ollama.supportedFlows.contains(flow) {
+            return ollama
+        }
+        return httpProviders(supporting: flow).first
+    }
+
+    // MARK: - Unified Provider API
+
+    /// Returns all provider identifiers (CLI + HTTP).
+    var allProviderIdentifiers: [String] {
+        Array(Set(cliProviders.keys).union(httpProviders.keys))
+    }
+
+    /// Returns all providers (CLI + HTTP) that support a given flow.
+    func allProviders(supporting flow: AgentFlow) -> [UnifiedProviderInfo] {
+        var results: [UnifiedProviderInfo] = []
+
+        for provider in cliProviders.values where provider.supportedFlows.contains(flow) {
+            results.append(UnifiedProviderInfo(
+                identifier: provider.identifier,
+                displayName: provider.displayName,
+                type: .cli,
+                supportedFlows: provider.supportedFlows,
+                isAvailable: availabilityCache[provider.identifier]?.isAvailable ?? false
+            ))
+        }
+
+        for provider in httpProviders.values where provider.supportedFlows.contains(flow) {
+            results.append(UnifiedProviderInfo(
+                identifier: provider.identifier,
+                displayName: provider.displayName,
+                type: .http,
+                supportedFlows: provider.supportedFlows,
+                isAvailable: availabilityCache[provider.identifier]?.isAvailable ?? false
+            ))
+        }
+
+        return results.sorted { $0.displayName < $1.displayName }
+    }
+
+    // MARK: - Availability Checking
+
+    /// Checks availability of all providers (CLI + HTTP).
     func checkAvailability() async -> [String: ProviderAvailability] {
         var results: [String: ProviderAvailability] = [:]
 
-        for (identifier, provider) in providers {
+        // Check CLI providers
+        for (identifier, provider) in cliProviders {
             let result = await provider.locator.locate(userOverride: nil)
             switch result {
             case .success(let location):
@@ -75,14 +149,39 @@ final class ProviderRegistry {
                     isAvailable: true,
                     path: location.path,
                     version: location.version,
-                    error: nil
+                    error: nil,
+                    type: .cli
                 )
             case .failure(let error):
                 results[identifier] = ProviderAvailability(
                     isAvailable: false,
                     path: nil,
                     version: nil,
-                    error: error.localizedDescription
+                    error: error.localizedDescription,
+                    type: .cli
+                )
+            }
+        }
+
+        // Check HTTP providers
+        for (identifier, provider) in httpProviders {
+            let healthResult = await provider.checkHealth()
+            switch healthResult {
+            case .success(let status):
+                results[identifier] = ProviderAvailability(
+                    isAvailable: status.isHealthy,
+                    path: provider.endpoint.baseURL.absoluteString,
+                    version: status.version,
+                    error: status.isHealthy ? nil : status.message,
+                    type: .http
+                )
+            case .failure(let error):
+                results[identifier] = ProviderAvailability(
+                    isAvailable: false,
+                    path: provider.endpoint.baseURL.absoluteString,
+                    version: nil,
+                    error: error.localizedDescription,
+                    type: .http
                 )
             }
         }
@@ -105,26 +204,64 @@ final class ProviderRegistry {
     // MARK: - Private
 
     private func registerBuiltInProviders() {
-        // Register Claude Code provider
+        // Register CLI providers
         register(ClaudeCodeProvider())
+
+        // HTTP providers are registered via settings or auto-discovery
     }
+}
+
+// MARK: - Provider Types
+
+/// Type of provider (CLI or HTTP).
+enum ProviderType: String, Sendable, Codable {
+    case cli
+    case http
+}
+
+/// Unified information about a provider for UI display.
+struct UnifiedProviderInfo: Identifiable, Sendable {
+    let identifier: String
+    let displayName: String
+    let type: ProviderType
+    let supportedFlows: Set<AgentFlow>
+    let isAvailable: Bool
+
+    var id: String { identifier }
 }
 
 // MARK: - Provider Availability
 
 /// Represents the availability status of a provider.
 struct ProviderAvailability: Equatable, Sendable {
-    /// Whether the provider's CLI is available.
+    /// Whether the provider is available.
     let isAvailable: Bool
 
-    /// Path to the CLI binary (if found).
+    /// Path to the CLI binary or HTTP endpoint URL.
     let path: String?
 
-    /// Version of the CLI (if available).
+    /// Version of the provider (if available).
     let version: String?
 
     /// Error message (if not available).
     let error: String?
+
+    /// Type of provider.
+    let type: ProviderType
+
+    init(
+        isAvailable: Bool,
+        path: String?,
+        version: String?,
+        error: String?,
+        type: ProviderType = .cli
+    ) {
+        self.isAvailable = isAvailable
+        self.path = path
+        self.version = version
+        self.error = error
+        self.type = type
+    }
 }
 
 // MARK: - Provider Summary
@@ -135,23 +272,46 @@ extension ProviderRegistry {
         let id: String
         let displayName: String
         let supportedFlows: Set<AgentFlow>
-        let capabilities: ProviderCapabilities
+        let type: ProviderType
         let isAvailable: Bool
         let version: String?
+        let endpoint: String?
     }
 
-    /// Returns summaries of all registered providers.
-    var providerSummaries: [ProviderSummary] {
-        providers.map { (identifier, provider) in
+    /// Returns summaries of all registered CLI providers.
+    var cliProviderSummaries: [ProviderSummary] {
+        cliProviders.map { (identifier, provider) in
             let availability = availabilityCache[identifier]
             return ProviderSummary(
                 id: identifier,
                 displayName: provider.displayName,
                 supportedFlows: provider.supportedFlows,
-                capabilities: provider.capabilities,
+                type: .cli,
                 isAvailable: availability?.isAvailable ?? false,
-                version: availability?.version
+                version: availability?.version,
+                endpoint: availability?.path
             )
         }
+    }
+
+    /// Returns summaries of all registered HTTP providers.
+    var httpProviderSummaries: [ProviderSummary] {
+        httpProviders.map { (identifier, provider) in
+            let availability = availabilityCache[identifier]
+            return ProviderSummary(
+                id: identifier,
+                displayName: provider.displayName,
+                supportedFlows: provider.supportedFlows,
+                type: .http,
+                isAvailable: availability?.isAvailable ?? false,
+                version: availability?.version,
+                endpoint: provider.endpoint.baseURL.absoluteString
+            )
+        }
+    }
+
+    /// Returns summaries of all registered providers (CLI + HTTP).
+    var providerSummaries: [ProviderSummary] {
+        cliProviderSummaries + httpProviderSummaries
     }
 }

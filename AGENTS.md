@@ -149,3 +149,65 @@ Agency integrates with the Claude Code CLI (`claude`) to run AI-powered agent ta
 
 ### CLI Arguments
 The executor runs: `claude -p <prompt> --output-format stream-json --allowedTools Bash,Read,Write,Edit,Glob,Grep --max-turns 50`
+
+## HTTP Provider Integration (OpenLLM API)
+Agency supports HTTP-based model providers for running agent flows with local models (Ollama, llama.cpp, vLLM) or cloud APIs without CLI dependencies.
+
+### Architecture
+```
+ProviderRegistry
+├── CLI Providers (existing)
+│   └── ClaudeCodeProvider
+└── HTTP Providers (new)
+    ├── OpenAICompatibleProvider (base for most servers)
+    └── OllamaProvider (Ollama-specific features)
+
+AgentLoopController (for HTTP providers)
+├── Manages multi-turn conversation
+├── Routes tool calls to ToolExecutionBridge
+└── Streams progress to UI
+```
+
+### Components (`Agency/Models/HTTPProviders/`)
+- **AgentHTTPProvider**: Protocol for HTTP-based model providers
+- **HTTPProviderCapabilities**: OptionSet for streaming, tool use, vision, etc.
+- **HTTPProviderEndpoint**: Configuration for baseURL, model, auth, timeout
+- **GenericHTTPExecutor**: Implements `AgentExecutor` for HTTP providers
+- **AgentLoopController**: Actor managing the agentic loop for HTTP providers
+- **ToolExecutionBridge**: Executes tool calls (Read, Write, Edit, Bash, Glob, Grep)
+- **HTTPKeyManager**: Keychain storage for HTTP provider API keys
+- **OpenAICompatibleProvider**: Base provider for OpenAI-compatible APIs
+- **OllamaProvider**: Ollama-specific provider with model management
+
+### Supported Endpoints
+- **Ollama**: `http://localhost:11434/v1/` (default)
+- **llama.cpp**: `http://localhost:8080/v1/`
+- **vLLM**: `http://localhost:8000/v1/`
+- **LM Studio**: `http://localhost:1234/v1/`
+- **LocalAI**: `http://localhost:8080/v1/`
+
+### Configuration
+1. Go to Settings → HTTP Providers
+2. Ollama is auto-detected if running on localhost:11434
+3. Add custom OpenAI-compatible endpoints as needed
+4. Configure API keys for authenticated endpoints (stored in Keychain)
+
+### Agent Loop Flow
+```
+1. Build system prompt using PromptBuilder
+2. Send messages to model via HTTP
+3. Parse response for tool calls
+4. Execute tools via ToolExecutionBridge
+5. Append tool results to conversation
+6. Repeat until completion or max turns
+7. Update card with results
+```
+
+### Tool Execution
+HTTP providers use the same sandboxed tools as CLI providers:
+- **Read**: Read file contents with optional offset/limit
+- **Write**: Write content to file (within project root)
+- **Edit**: Replace text in file (exact match or replace_all)
+- **Bash**: Execute shell commands with timeout
+- **Glob**: Find files matching pattern
+- **Grep**: Search files using regex
