@@ -172,24 +172,20 @@ The agent system provides:
 Architecture (machine readable):
 ```json
 {
+  "version": 2,
   "generatedAt": "2025-12-07",
-  "languages": ["Swift 6.2"],
+  "projectGoal": "Agent-assisted kanban for macOS with automatic background processing.",
   "targetPlatforms": ["macOS 26"],
+  "languages": ["Swift 6.2"],
   "techStack": ["SwiftUI", "Swift Concurrency", "FSEvents", "NSBackgroundActivityScheduler"],
-  "components": {
-    "supervisor": ["AgentSupervisor", "SupervisorCoordinator", "AgentScheduler", "AgentFlowCoordinator", "FlowPipelineOrchestrator", "BacklogWatcher"],
-    "cliProviders": ["AgentCLIProvider", "ProviderRegistry", "GenericCLIExecutor", "ClaudeCodeProvider"],
-    "prompts": ["PromptBuilder", "PromptContext", "AgentRole", "DefaultPromptTemplates"],
-    "execution": ["AgentRunner", "SimulatedAgentExecutor", "XPCAgentExecutor", "ClaudeCodeExecutor", "GenericCLIExecutor"]
-  },
-  "flows": ["implement", "review", "research", "plan"],
-  "pipelines": ["implement-only", "implement-review", "research-implement", "full"],
+  "roadmapFingerprint": "d71088f56ff0d0190c8e1bc886d4eb1e94c9304ba6008c649fd890541abc270b",
   "phases": [
     {"number": 6, "label": "agent-planning", "status": "done"},
     {"number": 7, "label": "project-bootstrap", "status": "done"},
-    {"number": 9, "label": "claude-code", "status": "done"}
+    {"number": 9, "label": "claude-code", "status": "done"},
+    {"number": 12, "label": "openllm-api", "status": "done"}
   ],
-  "version": 2
+  "manualNotes": null
 }
 ```
 
