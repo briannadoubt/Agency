@@ -6,7 +6,8 @@ import os.log
 /// Unlike CLI providers where the agent loop is handled by the CLI tool,
 /// HTTP providers require implementing the agent loop in Agency. This controller
 /// manages the multi-turn conversation with tool execution.
-actor AgentLoopController {
+@MainActor
+final class AgentLoopController {
     private static let logger = Logger(subsystem: "dev.agency.app", category: "AgentLoopController")
 
     private let provider: any AgentHTTPProvider
@@ -32,6 +33,9 @@ actor AgentLoopController {
     private var turnCount: Int = 0
     private var totalTokensUsed: Int = 0
 
+    // Cache capability check
+    private let supportsStreaming: Bool
+
     init(
         provider: any AgentHTTPProvider,
         toolBridge: ToolExecutionBridge,
@@ -43,6 +47,7 @@ actor AgentLoopController {
         self.session = session
         self.configuration = configuration
         self.configuration.maxTurns = provider.maxTurns
+        self.supportsStreaming = provider.capabilities.contains(.streaming)
     }
 
     /// Runs the agent loop with the given system prompt.
@@ -75,7 +80,7 @@ actor AgentLoopController {
 
             // Get model response
             let response: ChatResponse
-            if configuration.streaming && provider.capabilities.contains(.streaming) {
+            if configuration.streaming && supportsStreaming {
                 response = try await streamModelRequest(emit: emit)
             } else {
                 response = try await sendModelRequest()
@@ -221,7 +226,10 @@ actor AgentLoopController {
                 while toolCalls.count <= index {
                     toolCalls.append(ToolCallAccumulator())
                 }
-                toolCalls[index].accumulate(id: id, name: name, arguments: arguments)
+                // Inline accumulation to avoid actor isolation issues
+                if let id { toolCalls[index].id = id }
+                if let name { toolCalls[index].name = name }
+                if let args = arguments { toolCalls[index].arguments += args }
 
             case .done(let reason, let tokenUsage):
                 finishReason = reason
@@ -280,7 +288,8 @@ actor AgentLoopController {
 
     private func pruneContext() {
         // Keep system message and recent messages
-        guard messages.count > 4 else { return }
+        let originalCount = messages.count
+        guard originalCount > 4 else { return }
 
         let systemMessage = messages.first { $0.role == .system }
         let recentMessages = Array(messages.suffix(10))
@@ -296,14 +305,14 @@ actor AgentLoopController {
         pruned.append(contentsOf: recentMessages)
 
         messages = pruned
-        Self.logger.info("Pruned context from \(messages.count) to \(pruned.count) messages")
+        Self.logger.info("Pruned context from \(originalCount) to \(pruned.count) messages")
     }
 }
 
 // MARK: - Helper Types
 
 /// Accumulates partial tool call data from streaming responses.
-private struct ToolCallAccumulator {
+private struct ToolCallAccumulator: Sendable {
     var id: String?
     var name: String?
     var arguments: String = ""

@@ -1,4 +1,4 @@
-import Foundation
+@preconcurrency import Foundation
 import os.log
 
 /// Ollama-specific provider that extends OpenAI-compatible with Ollama features.
@@ -7,7 +7,7 @@ import os.log
 /// and its native `/api/chat` endpoint. This provider uses the OpenAI-compatible
 /// endpoint for consistency while adding Ollama-specific features like model
 /// listing and health checks.
-struct OllamaProvider: AgentHTTPProvider {
+struct OllamaProvider: AgentHTTPProvider, Sendable {
     private static let logger = Logger(subsystem: "dev.agency.app", category: "OllamaProvider")
 
     /// Default Ollama endpoint.

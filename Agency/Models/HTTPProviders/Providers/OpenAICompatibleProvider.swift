@@ -1,11 +1,11 @@
-import Foundation
+@preconcurrency import Foundation
 import os.log
 
 /// Base provider for OpenAI-compatible APIs.
 ///
 /// This provider works with any server that implements the OpenAI chat completions API,
 /// including Ollama, llama.cpp, vLLM, LM Studio, LocalAI, and text-generation-webui.
-struct OpenAICompatibleProvider: AgentHTTPProvider {
+struct OpenAICompatibleProvider: AgentHTTPProvider, Sendable {
     private static let logger = Logger(subsystem: "dev.agency.app", category: "OpenAICompatibleProvider")
 
     let identifier: String
@@ -257,7 +257,7 @@ struct OpenAICompatibleProvider: AgentHTTPProvider {
 
 // MARK: - OpenAI API Types
 
-private struct ChatCompletionRequest: Encodable {
+private struct ChatCompletionRequest: Encodable, Sendable {
     let model: String
     let messages: [OpenAIMessage]
     let maxTokens: Int?

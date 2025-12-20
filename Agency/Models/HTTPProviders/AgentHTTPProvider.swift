@@ -2,28 +2,19 @@ import Foundation
 
 /// Capabilities that an HTTP provider may support.
 struct HTTPProviderCapabilities: OptionSet, Sendable {
+    static let streaming = HTTPProviderCapabilities(rawValue: 1 << 0)
+    static let toolUse = HTTPProviderCapabilities(rawValue: 1 << 1)
+    static let vision = HTTPProviderCapabilities(rawValue: 1 << 2)
+    static let costTracking = HTTPProviderCapabilities(rawValue: 1 << 3)
+    static let jsonMode = HTTPProviderCapabilities(rawValue: 1 << 4)
+    static let systemMessages = HTTPProviderCapabilities(rawValue: 1 << 5)
+    static let local = HTTPProviderCapabilities(rawValue: 1 << 6)
+
     let rawValue: Int
 
-    /// Provider streams responses in real-time via SSE.
-    static let streaming = HTTPProviderCapabilities(rawValue: 1 << 0)
-
-    /// Provider supports tool/function calling.
-    static let toolUse = HTTPProviderCapabilities(rawValue: 1 << 1)
-
-    /// Provider supports vision/image inputs.
-    static let vision = HTTPProviderCapabilities(rawValue: 1 << 2)
-
-    /// Provider tracks API costs.
-    static let costTracking = HTTPProviderCapabilities(rawValue: 1 << 3)
-
-    /// Provider supports JSON mode output.
-    static let jsonMode = HTTPProviderCapabilities(rawValue: 1 << 4)
-
-    /// Provider supports system messages.
-    static let systemMessages = HTTPProviderCapabilities(rawValue: 1 << 5)
-
-    /// Provider is a local server (no API key required).
-    static let local = HTTPProviderCapabilities(rawValue: 1 << 6)
+    nonisolated init(rawValue: Int) {
+        self.rawValue = rawValue
+    }
 
     /// Common capability sets
     static let openAICompatible: HTTPProviderCapabilities = [.streaming, .toolUse, .systemMessages]
@@ -78,6 +69,7 @@ struct HTTPProviderEndpoint: Sendable, Equatable, Codable {
 ///
 /// HTTP providers connect to model APIs (local or cloud) via HTTP requests,
 /// unlike CLI providers which execute external command-line tools.
+@MainActor
 protocol AgentHTTPProvider: Sendable {
     /// Unique identifier for this provider (e.g., "ollama", "openai").
     var identifier: String { get }
@@ -93,6 +85,9 @@ protocol AgentHTTPProvider: Sendable {
 
     /// Endpoint configuration.
     var endpoint: HTTPProviderEndpoint { get }
+
+    /// Maximum number of tool use turns before stopping.
+    var maxTurns: Int { get }
 
     /// Builds the HTTP request for a chat completion.
     /// - Parameters:
@@ -123,9 +118,6 @@ protocol AgentHTTPProvider: Sendable {
     /// Lists available models at this endpoint (if supported).
     /// - Returns: Array of model identifiers, or nil if not supported.
     func listModels() async -> [String]?
-
-    /// Maximum number of tool use turns before stopping.
-    var maxTurns: Int { get }
 }
 
 // MARK: - Default Implementations
@@ -159,25 +151,25 @@ struct ChatMessage: Sendable, Equatable {
     let role: ChatRole
     let content: [MessageContent]
 
-    init(role: ChatRole, content: [MessageContent]) {
+    nonisolated init(role: ChatRole, content: [MessageContent]) {
         self.role = role
         self.content = content
     }
 
     /// Convenience initializer for text-only messages.
-    init(role: ChatRole, text: String) {
+    nonisolated init(role: ChatRole, text: String) {
         self.role = role
         self.content = [.text(text)]
     }
 
     /// Convenience initializer for tool result messages.
-    init(toolResult id: String, content: String, isError: Bool = false) {
+    nonisolated init(toolResult id: String, content: String, isError: Bool = false) {
         self.role = .tool
         self.content = [.toolResult(id: id, content: content, isError: isError)]
     }
 
     /// Extracts text content from the message.
-    var textContent: String {
+    nonisolated var textContent: String {
         content.compactMap { item in
             if case .text(let text) = item { return text }
             return nil
@@ -185,7 +177,7 @@ struct ChatMessage: Sendable, Equatable {
     }
 
     /// Extracts tool use items from the message.
-    var toolUses: [(id: String, name: String, arguments: String)] {
+    nonisolated var toolUses: [(id: String, name: String, arguments: String)] {
         content.compactMap { item in
             if case .toolUse(let id, let name, let args) = item {
                 return (id, name, args)
@@ -203,12 +195,18 @@ struct ToolDefinition: Sendable, Equatable {
     let description: String
     let parameters: ToolParameters
 
+    nonisolated init(name: String, description: String, parameters: ToolParameters) {
+        self.name = name
+        self.description = description
+        self.parameters = parameters
+    }
+
     struct ToolParameters: Sendable, Equatable {
         let type: String
         let properties: [String: PropertySchema]
         let required: [String]
 
-        init(type: String = "object", properties: [String: PropertySchema], required: [String] = []) {
+        nonisolated init(type: String = "object", properties: [String: PropertySchema], required: [String] = []) {
             self.type = type
             self.properties = properties
             self.required = required
@@ -220,7 +218,7 @@ struct ToolDefinition: Sendable, Equatable {
         let description: String?
         let enumValues: [String]?
 
-        init(type: String, description: String? = nil, enumValues: [String]? = nil) {
+        nonisolated init(type: String, description: String? = nil, enumValues: [String]? = nil) {
             self.type = type
             self.description = description
             self.enumValues = enumValues
@@ -236,6 +234,12 @@ struct ChatResponse: Sendable, Equatable {
     let finishReason: FinishReason
     let usage: TokenUsage?
 
+    nonisolated init(message: ChatMessage, finishReason: FinishReason, usage: TokenUsage?) {
+        self.message = message
+        self.finishReason = finishReason
+        self.usage = usage
+    }
+
     enum FinishReason: String, Sendable, Equatable {
         case stop
         case toolUse = "tool_calls"
@@ -248,6 +252,12 @@ struct ChatResponse: Sendable, Equatable {
         let promptTokens: Int
         let completionTokens: Int
         let totalTokens: Int
+
+        nonisolated init(promptTokens: Int, completionTokens: Int, totalTokens: Int) {
+            self.promptTokens = promptTokens
+            self.completionTokens = completionTokens
+            self.totalTokens = totalTokens
+        }
     }
 }
 
@@ -271,6 +281,13 @@ struct ProviderHealthStatus: Sendable, Equatable {
     let version: String?
     let latencyMs: Double?
     let message: String?
+
+    nonisolated init(isHealthy: Bool, version: String?, latencyMs: Double?, message: String?) {
+        self.isHealthy = isHealthy
+        self.version = version
+        self.latencyMs = latencyMs
+        self.message = message
+    }
 }
 
 // MARK: - Provider Errors

@@ -40,16 +40,20 @@ actor ToolExecutionBridge {
     private let configuration: Configuration
     private let fileManager: FileManager
 
+    // Store allowed tools separately for nonisolated access
+    private let _allowedTools: Set<String>
+
     init(
         configuration: Configuration = .default,
         fileManager: FileManager = .default
     ) {
         self.configuration = configuration
         self.fileManager = fileManager
+        self._allowedTools = configuration.allowedTools
     }
 
     /// Returns the tool definitions for the model.
-    var availableTools: [ToolDefinition] {
+    nonisolated var availableTools: [ToolDefinition] {
         var tools: [ToolDefinition] = []
 
         // Read tool
@@ -183,8 +187,8 @@ actor ToolExecutionBridge {
         ))
 
         // Filter by allowed tools if configured
-        if !configuration.allowedTools.isEmpty {
-            tools = tools.filter { configuration.allowedTools.contains($0.name) }
+        if !_allowedTools.isEmpty {
+            tools = tools.filter { _allowedTools.contains($0.name) }
         }
 
         return tools
@@ -212,25 +216,9 @@ actor ToolExecutionBridge {
             return .error("Invalid JSON arguments: \(arguments)")
         }
 
-        // Execute with timeout
-        return await withTaskGroup(of: ToolResult?.self) { group in
-            group.addTask {
-                await self.executeToolWithArgs(toolName: toolName, args: args, projectRoot: projectRoot)
-            }
-
-            group.addTask {
-                try? await Task.sleep(for: .seconds(self.configuration.timeout))
-                return nil
-            }
-
-            if let result = await group.next(), let unwrapped = result {
-                group.cancelAll()
-                return unwrapped
-            }
-
-            group.cancelAll()
-            return .error("Tool execution timed out after \(Int(configuration.timeout)) seconds")
-        }
+        // Execute tool
+        // TODO: Add timeout handling using Task.withTimeout when available
+        return await executeToolWithArgs(toolName: toolName, args: args, projectRoot: projectRoot)
     }
 
     private func executeToolWithArgs(

@@ -21,7 +21,18 @@ final class AgentSupervisor {
     private var scheduler: AgentScheduler!
 
     /// The background supervisor coordinator for automatic card processing.
-    private(set) lazy var coordinator: SupervisorCoordinator = {
+    private var _coordinator: SupervisorCoordinator?
+
+    var coordinator: SupervisorCoordinator {
+        if let existing = _coordinator {
+            return existing
+        }
+        let newCoordinator = createCoordinator()
+        _coordinator = newCoordinator
+        return newCoordinator
+    }
+
+    private func createCoordinator() -> SupervisorCoordinator {
         // Create worker launcher adapter
         let workerLauncher = SchedulerWorkerLauncherAdapter(supervisor: self)
 
@@ -48,7 +59,7 @@ final class AgentSupervisor {
             scheduler: scheduler,
             flowCoordinator: flowCoordinator
         )
-    }()
+    }
 
     /// Whether the background coordinator is currently running.
     var isCoordinatorRunning: Bool {
