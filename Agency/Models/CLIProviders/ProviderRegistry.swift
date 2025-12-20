@@ -201,13 +201,63 @@ final class ProviderRegistry {
         availabilityCache
     }
 
+    // MARK: - Auto-Discovery
+
+    /// Attempts to auto-discover and register HTTP providers.
+    /// Call this on app startup to register available local providers.
+    func autoDiscoverProviders() async {
+        logger.info("Auto-discovering HTTP providers...")
+
+        // Try to detect Ollama
+        if let ollama = await OllamaProvider.autoDetect() {
+            register(ollama)
+            logger.info("Auto-discovered Ollama provider")
+        }
+
+        // Load custom providers from settings
+        await loadCustomProvidersFromSettings()
+    }
+
+    private func loadCustomProvidersFromSettings() async {
+        guard let data = UserDefaults.standard.data(forKey: "HTTPCustomProviders"),
+              let configs = try? JSONDecoder().decode([CustomProviderConfig].self, from: data) else {
+            return
+        }
+
+        for config in configs {
+            guard let url = URL(string: config.endpoint) else { continue }
+
+            let auth: HTTPProviderAuth
+            if config.requiresApiKey {
+                auth = .bearer(keychain: config.identifier)
+            } else {
+                auth = .none
+            }
+
+            let endpoint = HTTPProviderEndpoint(
+                baseURL: url,
+                model: config.model,
+                auth: auth
+            )
+
+            let provider = OpenAICompatibleProvider(
+                identifier: config.identifier,
+                displayName: config.name,
+                endpoint: endpoint
+            )
+
+            register(provider)
+            logger.info("Loaded custom HTTP provider: \(config.name)")
+        }
+    }
+
     // MARK: - Private
 
     private func registerBuiltInProviders() {
         // Register CLI providers
         register(ClaudeCodeProvider())
 
-        // HTTP providers are registered via settings or auto-discovery
+        // HTTP providers are auto-discovered asynchronously
     }
 }
 

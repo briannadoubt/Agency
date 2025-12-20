@@ -16,6 +16,12 @@ struct HTTPProviderSettingsView: View {
     // Custom provider state
     @State private var customProviders: [CustomProviderConfig] = []
 
+    // Default provider per flow type
+    @State private var defaultProviderForImplement: String = "claude-code"
+    @State private var defaultProviderForReview: String = "claude-code"
+    @State private var defaultProviderForResearch: String = "claude-code"
+    @State private var defaultProviderForPlan: String = "claude-code"
+
     enum ProviderStatus: Equatable {
         case checking
         case available(version: String?)
@@ -28,12 +34,15 @@ struct HTTPProviderSettingsView: View {
 
             customProvidersSection
 
+            defaultProviderSection
+
             providerSummarySection
         }
         .formStyle(.grouped)
         .task {
             await checkOllamaStatus()
             await loadCustomProviders()
+            loadDefaultProviderPreferences()
         }
         .sheet(isPresented: $showAddProvider) {
             AddCustomProviderSheet(
@@ -180,6 +189,61 @@ struct HTTPProviderSettingsView: View {
                 Image(systemName: HTTPKeyManager.exists(for: config.identifier) ? "key.fill" : "key")
                     .foregroundStyle(HTTPKeyManager.exists(for: config.identifier) ? .green : .orange)
             }
+        }
+    }
+
+    // MARK: - Default Provider Section
+
+    @ViewBuilder
+    private var defaultProviderSection: some View {
+        Section {
+            defaultProviderPicker(
+                title: "Implement",
+                selection: $defaultProviderForImplement,
+                flow: .implement
+            )
+            defaultProviderPicker(
+                title: "Review",
+                selection: $defaultProviderForReview,
+                flow: .review
+            )
+            defaultProviderPicker(
+                title: "Research",
+                selection: $defaultProviderForResearch,
+                flow: .research
+            )
+            defaultProviderPicker(
+                title: "Plan",
+                selection: $defaultProviderForPlan,
+                flow: .plan
+            )
+        } header: {
+            Text("Default Provider per Flow Type")
+        } footer: {
+            Text("Select which provider to use by default for each agent flow type.")
+        }
+    }
+
+    @ViewBuilder
+    private func defaultProviderPicker(
+        title: String,
+        selection: Binding<String>,
+        flow: AgentFlow
+    ) -> some View {
+        Picker(title, selection: selection) {
+            Text("Claude Code (CLI)").tag("claude-code")
+
+            if case_available(ollamaStatus) {
+                Text("Ollama").tag("ollama")
+            }
+
+            ForEach(customProviders) { config in
+                Text(config.name).tag(config.identifier)
+            }
+        }
+        .pickerStyle(.menu)
+        .onChange(of: selection.wrappedValue) { _, _ in
+            saveDefaultProviderPreferences()
         }
     }
 
@@ -343,6 +407,30 @@ struct HTTPProviderSettingsView: View {
     private func unregisterCustomProvider(_ config: CustomProviderConfig) {
         registry.unregister(identifier: config.identifier)
         try? HTTPKeyManager.delete(for: config.identifier)
+    }
+
+    private func loadDefaultProviderPreferences() {
+        let defaults = UserDefaults.standard
+        if let implement = defaults.string(forKey: "DefaultProviderImplement") {
+            defaultProviderForImplement = implement
+        }
+        if let review = defaults.string(forKey: "DefaultProviderReview") {
+            defaultProviderForReview = review
+        }
+        if let research = defaults.string(forKey: "DefaultProviderResearch") {
+            defaultProviderForResearch = research
+        }
+        if let plan = defaults.string(forKey: "DefaultProviderPlan") {
+            defaultProviderForPlan = plan
+        }
+    }
+
+    private func saveDefaultProviderPreferences() {
+        let defaults = UserDefaults.standard
+        defaults.set(defaultProviderForImplement, forKey: "DefaultProviderImplement")
+        defaults.set(defaultProviderForReview, forKey: "DefaultProviderReview")
+        defaults.set(defaultProviderForResearch, forKey: "DefaultProviderResearch")
+        defaults.set(defaultProviderForPlan, forKey: "DefaultProviderPlan")
     }
 }
 
