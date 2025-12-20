@@ -14,12 +14,6 @@ struct ClaudeCodeSettingsView: View {
     @State private var isTestingConnection = false
     @State private var connectionTestResult: ConnectionTestResult?
 
-    // Bookmark state
-    @State private var hasBookmark = false
-    @State private var bookmarkPath: String?
-    @State private var bookmarkError: String?
-    @State private var showBookmarkError = false
-
     enum ConnectionTestResult: Equatable {
         case success
         case failure(String)
@@ -42,15 +36,12 @@ struct ClaudeCodeSettingsView: View {
             }
 
             Section {
-                cliSelectionSection
+                pathOverrideField
+                clearOverrideButton
             } header: {
-                Text("CLI Location")
+                Text("Custom CLI Path")
             } footer: {
-                if hasBookmark {
-                    Text("Using saved CLI location. This persists across app launches.")
-                } else {
-                    Text("Select the Claude CLI executable to use. Required for sandboxed App Store apps.")
-                }
+                Text("Leave empty to auto-detect. Common locations: /opt/homebrew/bin/claude, /usr/local/bin/claude")
             }
 
             Section {
@@ -61,14 +52,8 @@ struct ClaudeCodeSettingsView: View {
         }
         .formStyle(.grouped)
         .task {
-            await refreshBookmarkStatus()
             await settings.refreshStatus()
             refreshKeyStatus()
-        }
-        .alert("Bookmark Error", isPresented: $showBookmarkError) {
-            Button("OK") { }
-        } message: {
-            Text(bookmarkError ?? "Unknown error saving bookmark")
         }
     }
 
@@ -81,10 +66,10 @@ struct ClaudeCodeSettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(statusTitle)
                     .font(.headline)
-                Text(statusMessage)
+                Text(settings.status.displayMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(3)
+                    .lineLimit(2)
             }
             Spacer()
             if isRefreshing {
@@ -94,7 +79,6 @@ struct ClaudeCodeSettingsView: View {
                 Button("Refresh") {
                     Task {
                         isRefreshing = true
-                        await refreshBookmarkStatus()
                         await settings.refreshStatus()
                         isRefreshing = false
                     }
@@ -103,15 +87,6 @@ struct ClaudeCodeSettingsView: View {
             }
         }
         .padding(.vertical, 4)
-    }
-
-    private var statusMessage: String {
-        switch settings.status {
-        case .notFound where !hasBookmark:
-            return "Select the Claude CLI below to grant access. Sandboxed apps require manual selection."
-        default:
-            return settings.status.displayMessage
-        }
     }
 
     @ViewBuilder
@@ -269,44 +244,31 @@ struct ClaudeCodeSettingsView: View {
         }
     }
 
-    // MARK: - CLI Selection
+    // MARK: - Path Override
 
     @ViewBuilder
-    private var cliSelectionSection: some View {
-        if hasBookmark, let path = bookmarkPath {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Selected CLI")
-                        .font(.subheadline)
-                    Text(path)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                Spacer()
-                Button("Change...") {
-                    selectFilePath()
-                }
-                .buttonStyle(.bordered)
-                Button {
-                    clearBookmark()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
+    private var pathOverrideField: some View {
+        HStack {
+            TextField("Custom CLI Path", text: $settings.cliPathOverride)
+                .textFieldStyle(.roundedBorder)
+            Button {
+                selectFilePath()
+            } label: {
+                Image(systemName: "folder")
             }
-        } else {
-            HStack {
-                Text("No CLI selected")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Select Claude CLI...") {
-                    selectFilePath()
+            .buttonStyle(.bordered)
+        }
+    }
+
+    @ViewBuilder
+    private var clearOverrideButton: some View {
+        if !settings.cliPathOverride.isEmpty {
+            Button("Clear Override") {
+                Task {
+                    await settings.clearOverride()
                 }
-                .buttonStyle(.borderedProminent)
             }
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -350,76 +312,14 @@ struct ClaudeCodeSettingsView: View {
 
     private func selectFilePath() {
         let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.message = "Select the folder containing the Claude CLI (e.g., /opt/homebrew/bin)"
-        panel.prompt = "Select Folder"
-        panel.directoryURL = URL(fileURLWithPath: "/opt/homebrew/bin")
+        panel.message = "Select the Claude CLI executable"
+        panel.prompt = "Select"
 
-        if panel.runModal() == .OK, let folderURL = panel.url {
-            // Check if claude exists in this folder
-            let claudeURL = folderURL.appendingPathComponent("claude")
-            guard FileManager.default.fileExists(atPath: claudeURL.path) else {
-                bookmarkError = "No 'claude' executable found in the selected folder"
-                showBookmarkError = true
-                return
-            }
-
-            // In sandboxed apps, we must access the security-scoped resource
-            // before creating a bookmark - do this synchronously
-            let didStartAccessing = folderURL.startAccessingSecurityScopedResource()
-
-            do {
-                // Create bookmark for the folder (not the symlink)
-                let bookmarkData = try folderURL.bookmarkData(
-                    options: [.withSecurityScope],
-                    includingResourceValuesForKeys: nil,
-                    relativeTo: nil
-                )
-
-                // Now save it async, but store the claude path
-                Task {
-                    await saveBookmarkData(bookmarkData, for: claudeURL, folder: folderURL)
-                }
-            } catch {
-                bookmarkError = error.localizedDescription
-                showBookmarkError = true
-            }
-
-            if didStartAccessing {
-                folderURL.stopAccessingSecurityScopedResource()
-            }
-        }
-    }
-
-    private func saveBookmarkData(_ data: Data, for cliURL: URL, folder folderURL: URL) async {
-        do {
-            try await CLIBookmarkStore.shared.saveBookmarkData(data, cliPath: cliURL.path, folderURL: folderURL)
-            await refreshBookmarkStatus()
-            await settings.refreshStatus()
-        } catch {
-            await MainActor.run {
-                bookmarkError = error.localizedDescription
-                showBookmarkError = true
-            }
-        }
-    }
-
-    private func refreshBookmarkStatus() async {
-        hasBookmark = await CLIBookmarkStore.shared.hasBookmark
-        if hasBookmark {
-            bookmarkPath = await CLIBookmarkStore.shared.getCLIPath()
-        } else {
-            bookmarkPath = nil
-        }
-    }
-
-    private func clearBookmark() {
-        Task {
-            await CLIBookmarkStore.shared.clearBookmark()
-            await refreshBookmarkStatus()
-            await settings.refreshStatus()
+        if panel.runModal() == .OK, let url = panel.url {
+            settings.cliPathOverride = url.path
         }
     }
 
@@ -465,23 +365,11 @@ struct ClaudeCodeSettingsView: View {
     private func testConnection() {
         guard let cliPath = settings.status.path else { return }
 
-        // Check if CLI was found via bookmark
-        let isBookmark: Bool
-        if case .available(_, _, let source) = settings.status {
-            isBookmark = source == .bookmark
-        } else {
-            isBookmark = false
-        }
-
         isTestingConnection = true
         connectionTestResult = nil
 
         Task {
             let result = await performConnectionTest(cliPath: cliPath)
-            // Stop accessing bookmark after test completes
-            if isBookmark {
-                await CLIBookmarkStore.shared.stopAccessing()
-            }
             await MainActor.run {
                 connectionTestResult = result
                 isTestingConnection = false
@@ -495,7 +383,6 @@ struct ClaudeCodeSettingsView: View {
         }
 
         let runner = ProcessRunner()
-        // Use a longer timeout for connection test (60 seconds) since Claude needs time to respond
         let output = await runner.run(
             command: cliPath,
             arguments: ["-p", "Say 'Connection successful' and nothing else", "--max-turns", "1"],

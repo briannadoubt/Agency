@@ -1,5 +1,7 @@
 import Foundation
 import os.log
+import Subprocess
+import System
 
 /// Locates the Claude Code CLI binary on the system.
 struct ClaudeCodeLocator {
@@ -14,12 +16,9 @@ struct ClaudeCodeLocator {
     ]
 
     private let fileManager: FileManager
-    private let processRunner: ProcessRunner
 
-    init(fileManager: FileManager = .default,
-         processRunner: ProcessRunner = ProcessRunner()) {
+    init(fileManager: FileManager = .default) {
         self.fileManager = fileManager
-        self.processRunner = processRunner
     }
 
     /// Result of locating the Claude CLI.
@@ -31,7 +30,6 @@ struct ClaudeCodeLocator {
 
     /// How the CLI was discovered.
     enum DiscoverySource: String, Sendable, Equatable {
-        case bookmark = "Saved Location"
         case userOverride = "User Override"
         case pathLookup = "PATH"
         case commonLocation = "Common Location"
@@ -55,32 +53,12 @@ struct ClaudeCodeLocator {
         }
     }
 
-    /// Locate the Claude CLI, checking bookmark first, then user override, then common locations, then PATH.
+    /// Locate the Claude CLI, checking user override first, then common locations, then PATH.
     func locate(userOverridePath: String? = nil) async -> Result<LocatorResult, LocatorError> {
         Self.logger.info("Starting Claude CLI location...")
         Self.logger.info("User override path: \(userOverridePath ?? "nil")")
 
-        // 1. Check security-scoped bookmark first (required for sandboxed apps)
-        Self.logger.info("Checking for security-scoped bookmark...")
-        if let bookmarkURL = await CLIBookmarkStore.shared.startAccessing() {
-            let path = bookmarkURL.path
-            Self.logger.info("Bookmark found: \(path)")
-            // Skip isExecutable check for bookmarks - symlinks may not report as executable
-            // Just try to get the version directly
-            Self.logger.info("Bookmark path found, checking version...")
-            let version = await getVersion(at: path)
-            if version != nil {
-                Self.logger.info("Bookmark version: \(version ?? "nil")")
-                return .success(LocatorResult(path: path, version: version, source: .bookmark))
-            } else {
-                Self.logger.warning("Bookmark version check failed - CLI may not be accessible")
-                await CLIBookmarkStore.shared.stopAccessing()
-            }
-        } else {
-            Self.logger.info("No bookmark available")
-        }
-
-        // 2. Check user override
+        // 1. Check user override
         if let override = userOverridePath?.trimmingCharacters(in: .whitespacesAndNewlines),
            !override.isEmpty {
             let expandedPath = (override as NSString).expandingTildeInPath
@@ -101,7 +79,7 @@ struct ClaudeCodeLocator {
             }
         }
 
-        // 3. Check common installation locations (more reliable than PATH)
+        // 2. Check common installation locations (more reliable than PATH)
         Self.logger.info("Checking \(Self.commonPaths.count) common paths...")
         for path in Self.commonPaths {
             let expandedPath = (path as NSString).expandingTildeInPath
@@ -126,7 +104,7 @@ struct ClaudeCodeLocator {
             }
         }
 
-        // 4. Try PATH lookup via `which claude` as fallback
+        // 3. Try PATH lookup via `which claude` as fallback
         Self.logger.info("Trying PATH lookup...")
         if let pathResult = await lookupInPath() {
             Self.logger.info("PATH lookup returned: \(pathResult)")
@@ -165,46 +143,83 @@ struct ClaudeCodeLocator {
 
     private func lookupInPath() async -> String? {
         Self.logger.info("Running /usr/bin/which claude...")
-        let output = await processRunner.run(command: "/usr/bin/which", arguments: ["claude"])
-        Self.logger.info("which exit code: \(output.exitCode)")
-        Self.logger.info("which stdout: \(output.stdout)")
-        Self.logger.info("which stderr: \(output.stderr)")
+        do {
+            let result = try await run(
+                .path(FilePath("/usr/bin/which")),
+                arguments: ["claude"],
+                output: .string(limit: 4096),
+                error: .string(limit: 4096)
+            )
 
-        if output.exitCode == 0 {
-            let rawPath = output.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-            // Handle "claude: aliased to /path" format from zsh
-            let path: String
-            if rawPath.contains("aliased to ") {
-                path = rawPath.components(separatedBy: "aliased to ").last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? rawPath
-                Self.logger.info("Extracted path from alias: \(path)")
-            } else {
-                path = rawPath
+            let exitCode = exitCode(from: result.terminationStatus)
+            let stdout = result.standardOutput ?? ""
+            let stderr = result.standardError ?? ""
+            Self.logger.info("which exit code: \(exitCode)")
+            Self.logger.info("which stdout: \(stdout)")
+            Self.logger.info("which stderr: \(stderr)")
+
+            if result.terminationStatus.isSuccess {
+                let rawPath = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Handle "claude: aliased to /path" format from zsh
+                let path: String
+                if rawPath.contains("aliased to ") {
+                    path = rawPath.components(separatedBy: "aliased to ").last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? rawPath
+                    Self.logger.info("Extracted path from alias: \(path)")
+                } else {
+                    path = rawPath
+                }
+                let exists = fileManager.fileExists(atPath: path)
+                Self.logger.info("Path '\(path)' exists: \(exists)")
+                if !path.isEmpty, exists {
+                    return path
+                }
             }
-            let exists = fileManager.fileExists(atPath: path)
-            Self.logger.info("Path '\(path)' exists: \(exists)")
-            if !path.isEmpty, exists {
-                return path
-            }
+        } catch {
+            Self.logger.error("which command failed: \(error.localizedDescription)")
         }
         return nil
     }
 
     private func getVersion(at path: String) async -> String? {
         Self.logger.info("Getting version for: \(path)")
-        let output = await processRunner.run(command: path, arguments: ["--version"])
-        Self.logger.info("Version check exit code: \(output.exitCode)")
-        Self.logger.info("Version stdout: '\(output.stdout)'")
-        Self.logger.info("Version stderr: '\(output.stderr)'")
-        guard output.exitCode == 0 else {
-            Self.logger.warning("Version check failed with exit code \(output.exitCode)")
+        do {
+            let result = try await run(
+                .path(FilePath(path)),
+                arguments: ["--version"],
+                output: .string(limit: 4096),
+                error: .string(limit: 4096)
+            )
+
+            let exitCode = exitCode(from: result.terminationStatus)
+            let stdout = result.standardOutput ?? ""
+            let stderr = result.standardError ?? ""
+            Self.logger.info("Version check exit code: \(exitCode)")
+            Self.logger.info("Version stdout: '\(stdout)'")
+            Self.logger.info("Version stderr: '\(stderr)'")
+
+            guard result.terminationStatus.isSuccess else {
+                Self.logger.warning("Version check failed with exit code \(exitCode)")
+                return nil
+            }
+            let version = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            return version.isEmpty ? nil : version
+        } catch {
+            Self.logger.error("Version check failed: \(error.localizedDescription)")
             return nil
         }
-        let version = output.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        return version.isEmpty ? nil : version
+    }
+
+    private func exitCode(from status: TerminationStatus) -> Int32 {
+        switch status {
+        case .exited(let code):
+            return code
+        case .unhandledException(let code):
+            return code
+        }
     }
 }
 
-/// Simple process runner for CLI commands.
+/// Simple process runner for CLI commands (used by settings view for connection test).
 struct ProcessRunner: Sendable {
     private static let logger = Logger(subsystem: "dev.agency.app", category: "ProcessRunner")
 
@@ -223,12 +238,19 @@ struct ProcessRunner: Sendable {
              timeout: Duration = defaultTimeout) async -> Output {
         Self.logger.info("ProcessRunner.run: \(command) \(arguments.joined(separator: " "))")
 
+        // Use Foundation Process for now since Environment.Key init is package-private
+        // This is only used for connection test in settings view
         let process = Process()
         process.executableURL = URL(fileURLWithPath: command)
         process.arguments = arguments
 
         if let environment {
-            process.environment = environment
+            // Merge with current environment
+            var mergedEnv = ProcessInfo.processInfo.environment
+            for (key, value) in environment {
+                mergedEnv[key] = value
+            }
+            process.environment = mergedEnv
         }
 
         let stdoutPipe = Pipe()

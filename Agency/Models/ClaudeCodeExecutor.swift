@@ -30,15 +30,8 @@ struct ClaudeCodeExecutor: AgentExecutor {
 
         // Resolve project root once and track for cleanup
         let workingDirectory = request.resolvedProjectRoot
-        var cliIsBookmark = false
         defer {
             workingDirectory?.stopAccessingSecurityScopedResource()
-            // Stop accessing CLI bookmark if we used one
-            if cliIsBookmark {
-                Task {
-                    await CLIBookmarkStore.shared.stopAccessing()
-                }
-            }
         }
 
         do {
@@ -47,8 +40,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
             await emit(.log("Claude Code executor starting (\(request.flow))"))
 
             // Validate prerequisites
-            let cliResolution = try await resolveCLIPath()
-            cliIsBookmark = cliResolution.isBookmark
+            let cliPath = try await resolveCLIPath()
             let environment = try resolveEnvironment()
             let prompt: String
             if usePromptBuilder, let projectRoot = workingDirectory {
@@ -61,7 +53,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
 
             // Run the CLI
             let result = try await runClaude(
-                cliPath: cliResolution.path,
+                cliPath: cliPath,
                 prompt: prompt,
                 workingDirectory: workingDirectory,
                 environment: environment,
@@ -134,12 +126,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
 
     // MARK: - Private
 
-    private struct CLIResolution {
-        let path: String
-        let isBookmark: Bool
-    }
-
-    private func resolveCLIPath() async throws -> CLIResolution {
+    private func resolveCLIPath() async throws -> String {
         let override = await MainActor.run {
             ClaudeCodeSettings.shared.cliPathOverride
         }
@@ -148,7 +135,7 @@ struct ClaudeCodeExecutor: AgentExecutor {
 
         switch result {
         case .success(let info):
-            return CLIResolution(path: info.path, isBookmark: info.source == .bookmark)
+            return info.path
         case .failure:
             throw ExecutorError.cliNotFound
         }

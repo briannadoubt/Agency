@@ -88,22 +88,11 @@ struct WizardAIGenerator {
         let locateResult = await locator.locate(userOverridePath: override.isEmpty ? nil : override)
 
         let cliPath: String
-        let isBookmark: Bool
         switch locateResult {
         case .success(let info):
             cliPath = info.path
-            isBookmark = info.source == .bookmark
         case .failure:
             throw GenerationError.cliNotFound
-        }
-
-        // Ensure we stop accessing security-scoped resource when done
-        defer {
-            if isBookmark {
-                Task {
-                    await CLIBookmarkStore.shared.stopAccessing()
-                }
-            }
         }
 
         // Get API key

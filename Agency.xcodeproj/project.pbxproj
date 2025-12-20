@@ -132,6 +132,7 @@
 			);
 			name = Agency;
 			packageProductDependencies = (
+				03A1B2C42F05A00100000002 /* Subprocess */,
 			);
 			productName = Agency;
 			productReference = 03964F682ED18013000DEA13 /* Agency.app */;
@@ -216,6 +217,9 @@
 			mainGroup = 03964F5F2ED18013000DEA13;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
+			packageReferences = (
+				03A1B2C32F05A00100000001 /* XCRemoteSwiftPackageReference "swift-subprocess" */,
+			);
 			productRefGroup = 03964F692ED18013000DEA13 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -639,6 +643,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		03A1B2C32F05A00100000001 /* XCRemoteSwiftPackageReference "swift-subprocess" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/swiftlang/swift-subprocess.git";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		03A1B2C42F05A00100000002 /* Subprocess */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 03A1B2C32F05A00100000001 /* XCRemoteSwiftPackageReference "swift-subprocess" */;
+			productName = Subprocess;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 03964F602ED18013000DEA13 /* Project object */;
 }
