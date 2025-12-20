@@ -10,6 +10,30 @@ import os.log
 struct OllamaProvider: AgentHTTPProvider, Sendable {
     private static let logger = Logger(subsystem: "dev.agency.app", category: "OllamaProvider")
 
+    /// Cache for health check results to reduce network calls.
+    private actor HealthCache {
+        private var cachedResult: (result: Result<ProviderHealthStatus, HTTPProviderError>, timestamp: Date)?
+        private let cacheDuration: TimeInterval = 30 // Cache for 30 seconds
+
+        func getCached() -> Result<ProviderHealthStatus, HTTPProviderError>? {
+            guard let cached = cachedResult else { return nil }
+            if Date().timeIntervalSince(cached.timestamp) < cacheDuration {
+                return cached.result
+            }
+            return nil
+        }
+
+        func set(_ result: Result<ProviderHealthStatus, HTTPProviderError>) {
+            cachedResult = (result, Date())
+        }
+
+        func invalidate() {
+            cachedResult = nil
+        }
+    }
+
+    private static let healthCache = HealthCache()
+
     /// Default Ollama endpoint.
     static let defaultBaseURL = URL(string: "http://localhost:11434/v1")!
 
@@ -74,6 +98,22 @@ struct OllamaProvider: AgentHTTPProvider, Sendable {
     // MARK: - Ollama-Specific Health Check
 
     func checkHealth() async -> Result<ProviderHealthStatus, HTTPProviderError> {
+        // Check cache first
+        if let cached = await Self.healthCache.getCached() {
+            return cached
+        }
+
+        let result = await performHealthCheck()
+        await Self.healthCache.set(result)
+        return result
+    }
+
+    /// Invalidates the health check cache, forcing a fresh check on next call.
+    func invalidateHealthCache() async {
+        await Self.healthCache.invalidate()
+    }
+
+    private func performHealthCheck() async -> Result<ProviderHealthStatus, HTTPProviderError> {
         let startTime = Date()
 
         // Use Ollama's native /api/version endpoint for health check

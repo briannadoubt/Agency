@@ -216,8 +216,7 @@ actor ToolExecutionBridge {
             return .error("Invalid JSON arguments: \(arguments)")
         }
 
-        // Execute tool
-        // TODO: Add timeout handling using Task.withTimeout when available
+        // Execute tool (individual tools handle their own timeouts)
         return await executeToolWithArgs(toolName: toolName, args: args, projectRoot: projectRoot)
     }
 
@@ -356,9 +355,56 @@ actor ToolExecutionBridge {
         }
     }
 
+    /// Dangerous commands that should be blocked for security.
+    private static let blockedCommands: Set<String> = [
+        "rm -rf /", "rm -rf /*", "rm -rf ~", "rm -rf $HOME",
+        "mkfs", "dd if=", ":(){:|:&};:", "chmod -R 777 /",
+        "wget", "curl -o", "curl --output",  // Prevent downloading executables
+        "> /dev/sd", "mv /* ", "shutdown", "reboot", "init 0", "init 6"
+    ]
+
+    /// Patterns that indicate dangerous commands.
+    private static let blockedPatterns: [String] = [
+        "rm\\s+-[rf]+\\s+/",           // rm -rf / variations
+        ":\\(\\)\\{",                   // Fork bomb
+        ">\\s*/dev/",                   // Writing to devices
+        "chmod.*777\\s+/",              // Dangerous chmod
+        "curl.*\\|.*sh",                // curl | sh patterns
+        "wget.*\\|.*sh",                // wget | sh patterns
+    ]
+
+    private func isCommandSafe(_ command: String) -> Bool {
+        let lowercased = command.lowercased()
+
+        // Check blocked commands
+        for blocked in Self.blockedCommands {
+            if lowercased.contains(blocked.lowercased()) {
+                return false
+            }
+        }
+
+        // Check blocked patterns
+        for pattern in Self.blockedPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+                let range = NSRange(command.startIndex..., in: command)
+                if regex.firstMatch(in: command, options: [], range: range) != nil {
+                    return false
+                }
+            }
+        }
+
+        return true
+    }
+
     private func executeBash(args: [String: Any], projectRoot: URL) async -> ToolResult {
         guard let command = args["command"] as? String else {
             return .error("Missing required parameter: command")
+        }
+
+        // Security check: block dangerous commands
+        guard isCommandSafe(command) else {
+            Self.logger.warning("Blocked potentially dangerous command: \(command.prefix(100))")
+            return .error("Command blocked for security reasons. Potentially dangerous operation detected.")
         }
 
         let timeout = min(args["timeout"] as? Int ?? 120_000, 600_000) // Max 10 minutes
@@ -377,18 +423,42 @@ actor ToolExecutionBridge {
 
             try process.run()
 
-            // Wait with timeout
-            let waitTask = Task {
-                process.waitUntilExit()
+            // Wait with timeout using Task race
+            let timedOut = await withTaskGroup(of: Bool.self) { group in
+                group.addTask {
+                    // Wait for process
+                    while process.isRunning {
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
+                    return false
+                }
+
+                group.addTask {
+                    // Timeout
+                    try? await Task.sleep(for: .seconds(timeoutSeconds))
+                    return true
+                }
+
+                // Return first completed
+                let result = await group.next() ?? false
+                group.cancelAll()
+
+                if result {
+                    // Timeout occurred - terminate process
+                    process.terminate()
+                    // Give it a moment, then force kill
+                    try? await Task.sleep(for: .seconds(1))
+                    if process.isRunning {
+                        process.interrupt()
+                    }
+                }
+
+                return result
             }
 
-            let timeoutTask = Task {
-                try await Task.sleep(for: .seconds(timeoutSeconds))
-                process.terminate()
+            if timedOut {
+                return .error("Command timed out after \(Int(timeoutSeconds)) seconds")
             }
-
-            await waitTask.value
-            timeoutTask.cancel()
 
             let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
             let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()

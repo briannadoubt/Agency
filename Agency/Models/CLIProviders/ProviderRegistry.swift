@@ -91,13 +91,58 @@ final class ProviderRegistry {
         httpProviders.values.filter { $0.supportedFlows.contains(flow) }
     }
 
-    /// Returns the default HTTP provider for a given flow.
+    /// Returns the default HTTP provider for a given flow, based on user preferences.
     func defaultHTTPProvider(for flow: AgentFlow) -> (any AgentHTTPProvider)? {
-        // Prefer Ollama for local models, fall back to first available
+        // Check user preferences stored in UserDefaults
+        let preferenceKey = Self.userDefaultsKey(for: flow)
+        if let preferredIdentifier = UserDefaults.standard.string(forKey: preferenceKey) {
+            // If preference is "claude-code", return nil (that's a CLI provider)
+            if preferredIdentifier == "claude-code" {
+                return nil
+            }
+            // Try to get the preferred HTTP provider
+            if let preferred = httpProviders[preferredIdentifier],
+               preferred.supportedFlows.contains(flow) {
+                return preferred
+            }
+        }
+
+        // Fall back: prefer Ollama for local models, then first available
         if let ollama = httpProviders["ollama"], ollama.supportedFlows.contains(flow) {
             return ollama
         }
         return httpProviders(supporting: flow).first
+    }
+
+    /// Returns the UserDefaults key for a flow's default provider setting.
+    private static func userDefaultsKey(for flow: AgentFlow) -> String {
+        switch flow {
+        case .implement: return "DefaultProviderImplement"
+        case .review: return "DefaultProviderReview"
+        case .research: return "DefaultProviderResearch"
+        case .plan: return "DefaultProviderPlan"
+        }
+    }
+
+    /// Returns the preferred backend kind for a flow based on user settings.
+    func preferredBackend(for flow: AgentFlow) -> AgentBackendKind {
+        let preferenceKey = Self.userDefaultsKey(for: flow)
+        guard let preferredIdentifier = UserDefaults.standard.string(forKey: preferenceKey) else {
+            return .claudeCode // Default to Claude Code CLI
+        }
+
+        switch preferredIdentifier {
+        case "claude-code":
+            return .claudeCode
+        case "ollama":
+            return .ollama
+        default:
+            // Check if it's a registered HTTP provider
+            if httpProviders[preferredIdentifier] != nil {
+                return .httpProvider
+            }
+            return .claudeCode
+        }
     }
 
     // MARK: - Unified Provider API
