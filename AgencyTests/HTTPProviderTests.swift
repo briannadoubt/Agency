@@ -5,6 +5,7 @@ import Foundation
 // MARK: - HTTP Provider Protocol Tests
 
 @Suite("HTTP Provider Protocol")
+@MainActor
 struct HTTPProviderProtocolTests {
 
     @Test("HTTPProviderCapabilities supports expected values")
@@ -43,6 +44,7 @@ struct HTTPProviderProtocolTests {
 // MARK: - HTTP Provider Endpoint Tests
 
 @Suite("HTTP Provider Endpoint")
+@MainActor
 struct HTTPProviderEndpointTests {
 
     @Test("Endpoint initializes with defaults")
@@ -77,6 +79,7 @@ struct HTTPProviderEndpointTests {
 // MARK: - Chat Message Tests
 
 @Suite("Chat Message")
+@MainActor
 struct ChatMessageTests {
 
     @Test("Creates text message")
@@ -119,6 +122,7 @@ struct ChatMessageTests {
 // MARK: - Tool Definition Tests
 
 @Suite("Tool Definition")
+@MainActor
 struct ToolDefinitionTests {
 
     @Test("Creates tool with parameters")
@@ -147,6 +151,7 @@ struct ToolDefinitionTests {
 // MARK: - HTTP Provider Error Tests
 
 @Suite("HTTP Provider Error")
+@MainActor
 struct HTTPProviderErrorTests {
 
     @Test("Error descriptions are localized")
@@ -172,6 +177,7 @@ struct HTTPProviderErrorTests {
 // MARK: - Provider Registry HTTP Extension Tests
 
 @Suite("Provider Registry HTTP Support")
+@MainActor
 struct ProviderRegistryHTTPTests {
 
     @MainActor
@@ -260,6 +266,7 @@ struct ProviderRegistryHTTPTests {
 // MARK: - OpenAI Compatible Provider Tests
 
 @Suite("OpenAI Compatible Provider")
+@MainActor
 struct OpenAICompatibleProviderTests {
 
     @Test("Provider has correct identifier and display name")
@@ -346,6 +353,7 @@ struct OpenAICompatibleProviderTests {
 // MARK: - Ollama Provider Tests
 
 @Suite("Ollama Provider")
+@MainActor
 struct OllamaProviderTests {
 
     @Test("Provider has correct defaults")
@@ -387,6 +395,7 @@ struct OllamaProviderTests {
 // MARK: - Tool Execution Bridge Tests
 
 @Suite("Tool Execution Bridge")
+@MainActor
 struct ToolExecutionBridgeTests {
 
     @Test("Bridge provides tool definitions")
@@ -474,6 +483,7 @@ struct ToolExecutionBridgeTests {
 // MARK: - HTTP Key Manager Tests
 
 @Suite("HTTP Key Manager")
+@MainActor
 struct HTTPKeyManagerTests {
 
     @Test("Key masking hides middle of key")
