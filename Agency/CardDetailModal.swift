@@ -1168,6 +1168,18 @@ private struct AgentControlPanel: View {
         .surfaceStyle(DesignTokens.Surfaces.mutedPanel)
     }
 
+    private var ollamaAvailability: ProviderAvailability? {
+        ProviderRegistry.shared.availability(for: "ollama")
+    }
+
+    private var isOllamaAvailable: Bool {
+        ollamaAvailability?.isAvailable ?? false
+    }
+
+    private var httpProviderCount: Int {
+        ProviderRegistry.shared.registeredHTTPProviders.count
+    }
+
     @ViewBuilder
     private var backendPicker: some View {
         HStack(spacing: DesignTokens.Spacing.small) {
@@ -1186,12 +1198,33 @@ private struct AgentControlPanel: View {
                     }
                 }
                 .tag(AgentBackendKind.claudeCode)
+
+                Divider()
+
+                HStack {
+                    Text("Ollama")
+                    if !isOllamaAvailable {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .tag(AgentBackendKind.ollama)
+
+                if httpProviderCount > 0 {
+                    Text("HTTP Provider").tag(AgentBackendKind.httpProvider)
+                }
             }
             .pickerStyle(.menu)
             .disabled(isActive)
 
             if selectedBackend == .claudeCode, let reason = claudeCodeUnavailableReason {
                 Text(reason)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(.orange)
+            }
+
+            if selectedBackend == .ollama && !isOllamaAvailable {
+                Text("Not running")
                     .font(DesignTokens.Typography.caption)
                     .foregroundStyle(.orange)
             }

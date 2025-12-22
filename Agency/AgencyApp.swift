@@ -11,6 +11,13 @@ import SwiftUI
 struct AgencyApp: App {
     @State private var showingNewProjectWizard = false
 
+    init() {
+        // Auto-discover HTTP providers on app startup
+        Task { @MainActor in
+            await ProviderRegistry.shared.autoDiscoverProviders()
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView(showNewProjectWizard: $showingNewProjectWizard)
