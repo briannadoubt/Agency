@@ -528,7 +528,27 @@ struct AddCustomProviderSheet: View {
             return
         }
 
-        let auth: HTTPProviderAuth = requiresApiKey ? .bearer(keychain: "test-\(UUID().uuidString)") : .none
+        // For authenticated providers, temporarily save the API key to keychain for testing
+        let testKeychainId = "test-connection-\(UUID().uuidString)"
+        var auth: HTTPProviderAuth = .none
+
+        if requiresApiKey {
+            if apiKey.isEmpty {
+                connectionError = "API key is required"
+                isTestingConnection = false
+                return
+            }
+            // Save the test API key temporarily
+            do {
+                try HTTPKeyManager.save(key: apiKey, for: testKeychainId)
+                auth = .bearer(keychain: testKeychainId)
+            } catch {
+                connectionError = "Failed to prepare API key: \(error.localizedDescription)"
+                isTestingConnection = false
+                return
+            }
+        }
+
         let providerEndpoint = HTTPProviderEndpoint(baseURL: url, model: model, auth: auth)
         let provider = OpenAICompatibleProvider(
             identifier: "test",
@@ -537,6 +557,11 @@ struct AddCustomProviderSheet: View {
         )
 
         let result = await provider.checkHealth()
+
+        // Clean up temporary keychain entry
+        if requiresApiKey {
+            try? HTTPKeyManager.delete(for: testKeychainId)
+        }
 
         await MainActor.run {
             isTestingConnection = false

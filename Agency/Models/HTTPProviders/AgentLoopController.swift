@@ -24,17 +24,54 @@ final class AgentLoopController {
         var requestTimeout: TimeInterval = 120
         /// Maximum context tokens before pruning.
         var maxContextTokens: Int = 100_000
+        /// Maximum retry attempts for transient errors.
+        var maxRetries: Int = 3
+        /// Base delay for exponential backoff (in seconds).
+        var retryBaseDelay: TimeInterval = 1.0
+        /// Maximum delay between retries (in seconds).
+        var retryMaxDelay: TimeInterval = 60.0
+        /// Minimum messages to keep when pruning (besides system message).
+        var minMessagesAfterPruning: Int = 20
 
         static let `default` = Configuration()
+    }
+
+    /// Represents a retryable HTTP error with optional retry-after hint.
+    private struct RetryableError: Error {
+        let underlying: HTTPProviderError
+        let retryAfter: TimeInterval?
+
+        var isRetryable: Bool {
+            switch underlying {
+            case .rateLimited, .timeout:
+                return true
+            case .serverError(let code, _):
+                // 500, 502, 503, 504 are typically transient
+                return code >= 500 && code <= 504
+            case .connectionFailed:
+                return true
+            default:
+                return false
+            }
+        }
     }
 
     private var configuration: Configuration
     private var messages: [ChatMessage] = []
     private var turnCount: Int = 0
     private var totalTokensUsed: Int = 0
+    private var tokenUsageHistory: [TurnTokenUsage] = []
 
     // Cache capability check
     private let supportsStreaming: Bool
+
+    /// Tracks token usage for a single turn.
+    struct TurnTokenUsage: Sendable {
+        let turn: Int
+        let promptTokens: Int
+        let completionTokens: Int
+        let totalTokens: Int
+    }
 
     init(
         provider: any AgentHTTPProvider,
@@ -64,6 +101,7 @@ final class AgentLoopController {
         messages = [ChatMessage(role: .system, text: systemPrompt)]
         turnCount = 0
         totalTokensUsed = 0
+        tokenUsageHistory = []
 
         // Add initial user message to start the conversation
         messages.append(ChatMessage(role: .user, text: "Please complete the task described in the system prompt."))
@@ -78,17 +116,31 @@ final class AgentLoopController {
             let progress = 0.1 + (Double(turnCount) / Double(configuration.maxTurns)) * 0.8
             await emit(.progress(progress, message: "Turn \(turnCount)"))
 
-            // Get model response
+            // Get model response with retry logic
             let response: ChatResponse
             if configuration.streaming && supportsStreaming {
-                response = try await streamModelRequest(emit: emit)
+                response = try await withRetry(emit: emit) {
+                    try await streamModelRequest(emit: emit)
+                }
             } else {
-                response = try await sendModelRequest()
+                response = try await withRetry(emit: emit) {
+                    try await sendModelRequest()
+                }
             }
 
             // Track token usage
             if let usage = response.usage {
                 totalTokensUsed += usage.totalTokens
+                let turnUsage = TurnTokenUsage(
+                    turn: turnCount,
+                    promptTokens: usage.promptTokens,
+                    completionTokens: usage.completionTokens,
+                    totalTokens: usage.totalTokens
+                )
+                tokenUsageHistory.append(turnUsage)
+
+                // Emit token usage for visibility
+                await emit(.log("[Tokens] Turn \(turnCount): +\(usage.completionTokens) completion, \(totalTokensUsed) total"))
             }
 
             // Add assistant message to history
@@ -153,10 +205,59 @@ final class AgentLoopController {
             await emit(.log("Warning: Reached maximum turns (\(configuration.maxTurns))"))
         }
 
+        // Emit final token usage summary
+        if totalTokensUsed > 0 {
+            let totalPrompt = tokenUsageHistory.reduce(0) { $0 + $1.promptTokens }
+            let totalCompletion = tokenUsageHistory.reduce(0) { $0 + $1.completionTokens }
+            await emit(.log("[Tokens] Final: \(totalPrompt) prompt + \(totalCompletion) completion = \(totalTokensUsed) total tokens"))
+        }
+
         await emit(.progress(0.95, message: "Completing..."))
     }
 
     // MARK: - Private Methods
+
+    /// Executes an operation with exponential backoff retry for transient errors.
+    private func withRetry<T>(
+        emit: @escaping @Sendable (WorkerLogEvent) async -> Void,
+        operation: () async throws -> T
+    ) async throws -> T {
+        var lastError: Error?
+        var attempt = 0
+
+        while attempt < configuration.maxRetries {
+            do {
+                return try await operation()
+            } catch let error as RetryableError where error.isRetryable {
+                attempt += 1
+                lastError = error.underlying
+
+                if attempt >= configuration.maxRetries {
+                    Self.logger.warning("Max retries (\(self.configuration.maxRetries)) exceeded")
+                    break
+                }
+
+                // Calculate delay: use Retry-After header if available, otherwise exponential backoff
+                let backoffDelay = configuration.retryBaseDelay * pow(2.0, Double(attempt - 1))
+                let delay = min(error.retryAfter ?? backoffDelay, configuration.retryMaxDelay)
+
+                await emit(.log("Transient error (attempt \(attempt)/\(configuration.maxRetries)): \(error.underlying.localizedDescription). Retrying in \(Int(delay))s..."))
+
+                try await Task.sleep(for: .seconds(delay))
+                try Task.checkCancellation()
+
+            } catch let error as HTTPProviderError {
+                // Non-retryable HTTP error, throw immediately
+                throw error
+            } catch {
+                // Other errors (network, cancellation, etc.)
+                throw error
+            }
+        }
+
+        // If we get here, we exhausted retries
+        throw lastError ?? HTTPProviderError.connectionFailed("Max retries exceeded")
+    }
 
     private func sendModelRequest() async throws -> ChatResponse {
         let tools = toolBridge.availableTools
@@ -202,7 +303,10 @@ final class AgentLoopController {
         }
 
         // Parse streaming response
-        var textContent = ""
+        // fullTextContent: Complete text for conversation history (never reset)
+        // logBuffer: Buffer for chunked UI display (reset after emitting)
+        var fullTextContent = ""
+        var logBuffer = ""
         var toolCalls: [ToolCallAccumulator] = []
         var finishReason: ChatResponse.FinishReason = .unknown
         var usage: ChatResponse.TokenUsage?
@@ -214,11 +318,13 @@ final class AgentLoopController {
 
             switch event {
             case .textDelta(let delta):
-                textContent += delta
-                // Emit text in chunks for real-time display
-                if textContent.count > 50 && textContent.hasSuffix(" ") {
-                    await emit(.log(textContent))
-                    textContent = ""
+                fullTextContent += delta
+                logBuffer += delta
+                // Emit text in chunks for real-time display (every ~80 chars at word boundary)
+                if logBuffer.count > 80, let lastSpace = logBuffer.lastIndex(of: " ") {
+                    let emitUpTo = logBuffer[...lastSpace]
+                    await emit(.log(String(emitUpTo)))
+                    logBuffer = String(logBuffer[logBuffer.index(after: lastSpace)...])
                 }
 
             case .toolCallDelta(let index, let id, let name, let arguments):
@@ -240,16 +346,16 @@ final class AgentLoopController {
             }
         }
 
-        // Emit any remaining text
-        if !textContent.isEmpty {
-            await emit(.log(textContent))
+        // Emit any remaining buffered text for UI display
+        if !logBuffer.isEmpty {
+            await emit(.log(logBuffer))
         }
 
-        // Build the response message
+        // Build the response message with FULL text content (not the buffer)
         var content: [MessageContent] = []
 
-        if !textContent.isEmpty {
-            content.append(.text(textContent))
+        if !fullTextContent.isEmpty {
+            content.append(.text(fullTextContent))
         }
 
         for accumulator in toolCalls {
@@ -274,38 +380,71 @@ final class AgentLoopController {
         case 200...299:
             return
         case 401:
+            // Authentication errors are not retryable
             throw HTTPProviderError.authenticationFailed
-        case 429:
-            let retryAfter = response.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init)
-            throw HTTPProviderError.rateLimited(retryAfter: retryAfter)
         case 404:
+            // Model not found is not retryable
             throw HTTPProviderError.modelNotFound(provider.endpoint.model)
+        case 429:
+            // Rate limited - retryable with Retry-After hint
+            let retryAfterSeconds = response.value(forHTTPHeaderField: "Retry-After")
+                .flatMap { Double($0) }
+            let error = HTTPProviderError.rateLimited(retryAfter: retryAfterSeconds.map { Int($0) })
+            throw RetryableError(underlying: error, retryAfter: retryAfterSeconds)
+        case 500, 502, 503, 504:
+            // Server errors are typically transient and retryable
+            let message = String(data: data, encoding: .utf8)
+            let error = HTTPProviderError.serverError(response.statusCode, message)
+            throw RetryableError(underlying: error, retryAfter: nil)
         default:
+            // Other errors (400, 403, etc.) are not retryable
             let message = String(data: data, encoding: .utf8)
             throw HTTPProviderError.serverError(response.statusCode, message)
         }
     }
 
     private func pruneContext() {
-        // Keep system message and recent messages
         let originalCount = messages.count
-        guard originalCount > 4 else { return }
+        let minToKeep = configuration.minMessagesAfterPruning
 
+        // Don't prune if we're already at or below minimum
+        guard originalCount > minToKeep + 2 else { return }
+
+        // Find system message (always first)
         let systemMessage = messages.first { $0.role == .system }
-        let recentMessages = Array(messages.suffix(10))
+
+        // Calculate how many messages to keep (at least minMessagesAfterPruning)
+        // Keep more recent context - aim for ~60% of messages to preserve continuity
+        let keepCount = max(minToKeep, originalCount * 3 / 5)
+
+        // Get recent messages, ensuring we don't break tool call/result pairs
+        var recentMessages = Array(messages.suffix(keepCount))
+
+        // Ensure first message in recent isn't a tool result (orphaned from its call)
+        while let first = recentMessages.first, first.role == .tool, recentMessages.count > 2 {
+            recentMessages.removeFirst()
+        }
+
+        // Build summary of pruned content for context continuity
+        let prunedCount = originalCount - recentMessages.count - (systemMessage != nil ? 1 : 0)
+        let summaryNote = """
+            [Context note: \(prunedCount) earlier messages were summarized to manage context length. \
+            The conversation has been ongoing - continue from the recent context below.]
+            """
 
         var pruned: [ChatMessage] = []
         if let system = systemMessage {
             pruned.append(system)
         }
-        pruned.append(ChatMessage(
-            role: .user,
-            text: "[Previous conversation pruned to manage context length. Continue from the recent context.]"
-        ))
+        pruned.append(ChatMessage(role: .user, text: summaryNote))
         pruned.append(contentsOf: recentMessages)
 
         messages = pruned
-        Self.logger.info("Pruned context from \(originalCount) to \(pruned.count) messages")
+
+        // Reset token count estimate (will be recalculated on next response)
+        totalTokensUsed = totalTokensUsed / 2  // Rough estimate after pruning
+
+        Self.logger.info("Pruned context from \(originalCount) to \(pruned.count) messages (kept \(recentMessages.count) recent)")
     }
 }
 
