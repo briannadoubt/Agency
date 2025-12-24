@@ -45,6 +45,13 @@ struct OpenAICompatibleProvider: AgentHTTPProvider, Sendable {
 
         // Headers
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        // Add idempotency key to prevent duplicate charges on network retries
+        // This is a unique identifier for this specific request
+        let requestId = UUID().uuidString
+        request.setValue(requestId, forHTTPHeaderField: "X-Request-ID")
+        request.setValue(requestId, forHTTPHeaderField: "Idempotency-Key")
+
         try applyAuthentication(to: &request)
 
         // Body
