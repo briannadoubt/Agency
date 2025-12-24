@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		039EF3892EF74BEB00706404 /* Subprocess in Frameworks */ = {isa = PBXBuildFile; productRef = 03A1B2C42F05A00100000002 /* Subprocess */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		03964F762ED18016000DEA13 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -64,6 +68,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				039EF3892EF74BEB00706404 /* Subprocess in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -216,10 +221,10 @@
 			);
 			mainGroup = 03964F5F2ED18013000DEA13;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
 			packageReferences = (
 				03A1B2C32F05A00100000001 /* XCRemoteSwiftPackageReference "swift-subprocess" */,
 			);
+			preferredProjectObjectVersion = 77;
 			productRefGroup = 03964F692ED18013000DEA13 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";

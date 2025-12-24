@@ -180,10 +180,10 @@ Architecture (machine readable):
   "techStack": ["SwiftUI", "Swift Concurrency", "FSEvents", "NSBackgroundActivityScheduler"],
   "roadmapFingerprint": "d71088f56ff0d0190c8e1bc886d4eb1e94c9304ba6008c649fd890541abc270b",
   "phases": [
-    {"number": 6, "label": "agent-planning", "status": "done"},
-    {"number": 7, "label": "project-bootstrap", "status": "done"},
-    {"number": 9, "label": "claude-code", "status": "done"},
-    {"number": 12, "label": "openllm-api", "status": "done"}
+    {"number": 6, "label": "agent-planning", "status": "done", "tasks": []},
+    {"number": 7, "label": "project-bootstrap", "status": "done", "tasks": []},
+    {"number": 9, "label": "claude-code", "status": "done", "tasks": []},
+    {"number": 12, "label": "openllm-api", "status": "done", "tasks": []}
   ],
   "manualNotes": null
 }
