@@ -232,6 +232,22 @@ struct ProcessRunner: Sendable {
     /// Default timeout for process execution (10 seconds).
     static let defaultTimeout: Duration = .seconds(10)
 
+    /// Waits for a process to exit without blocking the calling thread.
+    @concurrent
+    private static func waitForProcessAsync(_ process: Process) async {
+        await withCheckedContinuation { continuation in
+            process.terminationHandler = { _ in
+                continuation.resume()
+            }
+        }
+    }
+
+    /// Reads all data from a file handle asynchronously.
+    @concurrent
+    private static func readDataAsync(from handle: FileHandle) async -> Data {
+        handle.readDataToEndOfFile()
+    }
+
     func run(command: String,
              arguments: [String] = [],
              environment: [String: String]? = nil,
@@ -274,15 +290,16 @@ struct ProcessRunner: Sendable {
             }
         }
 
-        // Read output (blocking, but process is already running)
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        // Read output asynchronously without blocking
+        async let stdoutData = Self.readDataAsync(from: stdoutPipe.fileHandleForReading)
+        async let stderrData = Self.readDataAsync(from: stderrPipe.fileHandleForReading)
 
-        process.waitUntilExit()
+        // Wait for process without blocking
+        await Self.waitForProcessAsync(process)
         timeoutTask.cancel()
 
-        let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+        let stdout = String(data: await stdoutData, encoding: .utf8) ?? ""
+        let stderr = String(data: await stderrData, encoding: .utf8) ?? ""
 
         return Output(stdout: stdout, stderr: stderr, exitCode: process.terminationStatus)
     }

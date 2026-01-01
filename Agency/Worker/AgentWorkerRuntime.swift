@@ -4,6 +4,24 @@ import os.log
 /// Lightweight runtime used by the worker helper executable. This file deliberately avoids a `@main`
 /// entry so the code can live in the primary target until the helper target is wired up in Xcode.
 struct AgentWorkerRuntime {
+
+    // MARK: - Process Execution Helpers
+
+    /// Waits for a process to exit without blocking the calling thread.
+    @concurrent
+    private static func waitForProcessAsync(_ process: Process) async {
+        await withCheckedContinuation { continuation in
+            process.terminationHandler = { _ in
+                continuation.resume()
+            }
+        }
+    }
+
+    /// Reads all data from a file handle asynchronously.
+    @concurrent
+    private static func readDataAsync(from handle: FileHandle) async -> Data {
+        handle.readDataToEndOfFile()
+    }
     let payload: WorkerRunRequest
     let endpointName: String
     let logDirectory: URL
@@ -205,15 +223,17 @@ struct AgentWorkerRuntime {
 
         try process.run()
 
+        // Wait for process with cancellation support - non-blocking
         await withTaskCancellationHandler {
-            process.waitUntilExit()
+            await Self.waitForProcessAsync(process)
         } onCancel: {
             process.terminate()
         }
 
         await streamTask.value
 
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        // Read stderr asynchronously
+        let stderrData = await Self.readDataAsync(from: stderrPipe.fileHandleForReading)
         let stderr = String(data: stderrData, encoding: .utf8) ?? ""
 
         return CLIResult(exitCode: process.terminationStatus, stdout: "", stderr: stderr)
