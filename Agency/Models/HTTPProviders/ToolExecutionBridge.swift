@@ -15,8 +15,36 @@ actor ToolExecutionBridge {
     @concurrent
     private static func waitForProcessAsync(_ process: Process) async {
         await withCheckedContinuation { continuation in
+            // Use a lock-protected flag to ensure we only resume once
+            let state = OSAllocatedUnfairLock(initialState: false)
+
             process.terminationHandler = { _ in
-                continuation.resume()
+                // Only resume if we haven't already
+                let shouldResume = state.withLock { resumed -> Bool in
+                    if !resumed {
+                        resumed = true
+                        return true
+                    }
+                    return false
+                }
+                if shouldResume {
+                    continuation.resume()
+                }
+            }
+
+            // Race condition check: if the process already exited before we set the handler,
+            // the handler won't fire. Check isRunning after setting the handler.
+            if !process.isRunning {
+                let shouldResume = state.withLock { resumed -> Bool in
+                    if !resumed {
+                        resumed = true
+                        return true
+                    }
+                    return false
+                }
+                if shouldResume {
+                    continuation.resume()
+                }
             }
         }
     }
