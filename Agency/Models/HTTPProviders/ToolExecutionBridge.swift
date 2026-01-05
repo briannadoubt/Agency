@@ -7,6 +7,54 @@ import os.log
 /// them safely, returning structured results. It supports the same tools
 /// as CLI agents: Read, Write, Edit, Bash, Glob, and Grep.
 actor ToolExecutionBridge {
+
+    // MARK: - Process Execution Helpers
+
+    /// Waits for a process to exit without blocking the calling thread.
+    /// Uses the process's termination handler with a checked continuation.
+    @concurrent
+    private static func waitForProcessAsync(_ process: Process) async {
+        await withCheckedContinuation { continuation in
+            // Use a lock-protected flag to ensure we only resume once
+            let state = OSAllocatedUnfairLock(initialState: false)
+
+            process.terminationHandler = { _ in
+                // Only resume if we haven't already
+                let shouldResume = state.withLock { resumed -> Bool in
+                    if !resumed {
+                        resumed = true
+                        return true
+                    }
+                    return false
+                }
+                if shouldResume {
+                    continuation.resume()
+                }
+            }
+
+            // Race condition check: if the process already exited before we set the handler,
+            // the handler won't fire. Check isRunning after setting the handler.
+            if !process.isRunning {
+                let shouldResume = state.withLock { resumed -> Bool in
+                    if !resumed {
+                        resumed = true
+                        return true
+                    }
+                    return false
+                }
+                if shouldResume {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
+    /// Reads all data from a file handle asynchronously.
+    /// Runs the blocking read on a background thread.
+    @concurrent
+    private static func readDataAsync(from handle: FileHandle) async -> Data {
+        handle.readDataToEndOfFile()
+    }
     private static let logger = Logger(subsystem: "dev.agency.app", category: "ToolExecutionBridge")
 
     /// Result of a tool execution.
@@ -460,11 +508,12 @@ actor ToolExecutionBridge {
                 return .error("Command timed out after \(Int(timeoutSeconds)) seconds")
             }
 
-            let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
-            let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+            // Read output asynchronously without blocking
+            async let stdoutData = Self.readDataAsync(from: stdout.fileHandleForReading)
+            async let stderrData = Self.readDataAsync(from: stderr.fileHandleForReading)
 
-            let stdoutStr = String(data: stdoutData, encoding: .utf8) ?? ""
-            let stderrStr = String(data: stderrData, encoding: .utf8) ?? ""
+            let stdoutStr = String(data: await stdoutData, encoding: .utf8) ?? ""
+            let stderrStr = String(data: await stderrData, encoding: .utf8) ?? ""
 
             var output = stdoutStr
             if !stderrStr.isEmpty {
@@ -495,7 +544,7 @@ actor ToolExecutionBridge {
         let baseURL = searchPath.map { resolveFilePath($0, projectRoot: projectRoot) } ?? projectRoot
 
         do {
-            let matches = try globFiles(pattern: pattern, in: baseURL)
+            let matches = try await globFiles(pattern: pattern, in: baseURL)
             if matches.isEmpty {
                 return .success("No files matched pattern: \(pattern)")
             }
@@ -535,9 +584,12 @@ actor ToolExecutionBridge {
             process.standardError = stderr
 
             try process.run()
-            process.waitUntilExit()
 
-            let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
+            // Wait for process without blocking the actor
+            await Self.waitForProcessAsync(process)
+
+            // Read output asynchronously
+            let stdoutData = await Self.readDataAsync(from: stdout.fileHandleForReading)
             var output = String(data: stdoutData, encoding: .utf8) ?? ""
 
             // Truncate if too large
@@ -580,7 +632,7 @@ actor ToolExecutionBridge {
         return false
     }
 
-    private func globFiles(pattern: String, in directory: URL) throws -> [String] {
+    private func globFiles(pattern: String, in directory: URL) async throws -> [String] {
         // Use shell globbing via find
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -591,9 +643,12 @@ actor ToolExecutionBridge {
         process.standardOutput = stdout
 
         try process.run()
-        process.waitUntilExit()
 
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        // Wait for process without blocking
+        await Self.waitForProcessAsync(process)
+
+        // Read output asynchronously
+        let data = await Self.readDataAsync(from: stdout.fileHandleForReading)
         let output = String(data: data, encoding: .utf8) ?? ""
 
         return output.components(separatedBy: .newlines).filter { !$0.isEmpty }

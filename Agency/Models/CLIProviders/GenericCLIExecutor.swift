@@ -3,6 +3,53 @@ import os.log
 
 /// Generic executor that runs any CLI provider.
 struct GenericCLIExecutor: AgentExecutor {
+
+    // MARK: - Process Execution Helpers
+
+    /// Waits for a process to exit without blocking the calling thread.
+    /// Uses the process's termination handler with a checked continuation.
+    @concurrent
+    private static func waitForProcessAsync(_ process: Process) async {
+        await withCheckedContinuation { continuation in
+            // Use a lock-protected flag to ensure we only resume once
+            let state = OSAllocatedUnfairLock(initialState: false)
+
+            process.terminationHandler = { _ in
+                // Only resume if we haven't already
+                let shouldResume = state.withLock { resumed -> Bool in
+                    if !resumed {
+                        resumed = true
+                        return true
+                    }
+                    return false
+                }
+                if shouldResume {
+                    continuation.resume()
+                }
+            }
+
+            // Race condition check: if the process already exited before we set the handler,
+            // the handler won't fire. Check isRunning after setting the handler.
+            if !process.isRunning {
+                let shouldResume = state.withLock { resumed -> Bool in
+                    if !resumed {
+                        resumed = true
+                        return true
+                    }
+                    return false
+                }
+                if shouldResume {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
+    /// Reads all data from a file handle asynchronously.
+    @concurrent
+    private static func readDataAsync(from handle: FileHandle) async -> Data {
+        handle.readDataToEndOfFile()
+    }
     private static let logger = Logger(subsystem: "dev.agency.app", category: "GenericCLIExecutor")
 
     private let provider: any AgentCLIProvider
@@ -207,15 +254,17 @@ struct GenericCLIExecutor: AgentExecutor {
             throw error
         }
 
+        // Wait for process with cancellation support - non-blocking
         await withTaskCancellationHandler {
-            process.waitUntilExit()
+            await Self.waitForProcessAsync(process)
         } onCancel: {
             process.terminate()
         }
 
         await streamTask.value
 
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        // Read stderr asynchronously
+        let stderrData = await Self.readDataAsync(from: stderrPipe.fileHandleForReading)
         let stderr = String(data: stderrData, encoding: .utf8) ?? ""
 
         return CLIResult(stdout: "", stderr: stderr, exitCode: process.terminationStatus)
